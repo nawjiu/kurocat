@@ -80,7 +80,7 @@ KuroCat `v4.0.0+` 单文件程序原生内置 **Stdio** 与 **本机 Streamable 
 | `upsert_cat` | 新增或修改任意自定义猫咪（毛色、花纹、耳朵、瞳色、尾巴、白手套、高亮色、自定义胎记斑块），实时热更新上屏 |
 | `switch_cat` | 按 ID 秒切桌面当前显示的猫咪 |
 | `delete_cat` | 删除指定自定义猫咪（或重置内置外观） |
-| `get_settings` / `update_settings` | 读取或实时修改缩放比例、按键气泡、呼噜声、置顶、穿透锁定与开机自启 |
+| `get_settings` / `update_settings` | 读取或实时修改缩放比例、按键气泡、呼噜声、置顶、穿透锁定、开机自启与鼠标反转 |
 
 自定义猫咪配置保存在：
 - **Windows**：`%APPDATA%\kuro-cat-pet\cats.json`

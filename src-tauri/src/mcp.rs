@@ -143,7 +143,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_settings",
-            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|108, keyboardOrientation cat|viewer, autostart).",
+            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|108, keyboardOrientation cat|viewer, autostart, mouseInvert).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -155,7 +155,8 @@ fn tool_definitions() -> Value {
                     "soundEnabled": { "type": "boolean" },
                     "alwaysOnTop": { "type": "boolean" },
                     "clickThroughLocked": { "type": "boolean" },
-                    "autostart": { "type": "boolean" }
+                    "autostart": { "type": "boolean" },
+                    "mouseInvert": { "type": "boolean" }
                 }
             }
         }
@@ -301,6 +302,9 @@ fn execute_tool(name: &str, args: &Value, on_change: &dyn Fn()) -> Value {
                 if set_windows_autostart(b).is_ok() {
                     s.autostart = b;
                 }
+            }
+            if let Some(b) = args.get("mouseInvert").and_then(|v| v.as_bool()) {
+                s.mouse_invert = b;
             }
             save_settings(&s);
             on_change();
