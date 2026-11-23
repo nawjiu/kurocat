@@ -18,6 +18,10 @@ fn default_mcp_port() -> u16 {
     27420
 }
 
+fn default_mouse_invert() -> bool {
+    false
+}
+
 pub fn default_keyboard_layout() -> String {
     if cfg!(feature = "layout-108") {
         "108".to_string()
@@ -69,6 +73,8 @@ pub struct AppSettings {
     pub keyboard_orientation: String,
     #[serde(default = "default_privacy_password_guard")]
     pub privacy_password_guard: bool,
+    #[serde(default = "default_mouse_invert")]
+    pub mouse_invert: bool,
 }
 
 impl Default for AppSettings {
@@ -88,6 +94,7 @@ impl Default for AppSettings {
             keyboard_layout: default_keyboard_layout(),
             keyboard_orientation: default_keyboard_orientation(),
             privacy_password_guard: default_privacy_password_guard(),
+            mouse_invert: default_mouse_invert(),
         }
     }
 }

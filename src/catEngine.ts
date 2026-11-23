@@ -91,6 +91,7 @@ export class KuroCatEngine {
 
   public showKeyBubbles = true;
   public privacyMode = false;
+  public mouseInvert = false;
   public catBreed: CatBreed = 'black';
   public customSkin: ResolvedSkin | null = null;
   public keyboardLayout: KeyboardLayoutId = '65';
@@ -567,9 +568,13 @@ export class KuroCatEngine {
 
   public onGlobalMouseMove(nx: number, ny: number): void {
     const now = performance.now();
-    this.lastMouseNX = nx;
-    this.mouseTargetOffsetX = (nx - 0.5) * (this.catBreed === 'dafeiyu' ? 14 : 28);
-    this.mouseTargetOffsetY = (ny - 0.5) * (this.catBreed === 'dafeiyu' ? 11 : 20);
+    // Mirror the cursor when "鼠标反转" is on: the cat faces the viewer, so its
+    // left/right and up/down are opposite ours.
+    const mx = this.mouseInvert ? 1 - nx : nx;
+    const my = this.mouseInvert ? 1 - ny : ny;
+    this.lastMouseNX = mx;
+    this.mouseTargetOffsetX = (mx - 0.5) * (this.catBreed === 'dafeiyu' ? 14 : 28);
+    this.mouseTargetOffsetY = (my - 0.5) * (this.catBreed === 'dafeiyu' ? 11 : 20);
     this.lastMouseMoveAt = now;
 
     this.leftPaw.mode = 'mouse';

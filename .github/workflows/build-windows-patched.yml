@@ -1,0 +1,51 @@
+name: Build Patched Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mouse-invert
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app (Windows x64 NSIS)
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $nsis = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $nsis) { throw "installer not found" }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item $nsis.FullName "out/KuroCat-4.7.0-mouseinvert-x64-setup.exe"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kurocat-mouseinvert-x64
+          path: out/*.exe

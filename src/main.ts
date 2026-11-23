@@ -22,6 +22,7 @@ interface AppSettings {
   keyboardLayout: KeyboardLayoutId;
   keyboardOrientation: KeyboardOrientation;
   privacyPasswordGuard: boolean;
+  mouseInvert: boolean;
 }
 
 type InputEvent =
@@ -84,6 +85,7 @@ let settings: AppSettings = {
   keyboardLayout: '65',
   keyboardOrientation: 'cat',
   privacyPasswordGuard: true,
+  mouseInvert: false,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
@@ -140,6 +142,7 @@ function syncMenuUI(): void {
   setCheck('chk-top', settings.alwaysOnTop);
   setCheck('chk-autostart', settings.autostart);
   setCheck('chk-mcp', settings.mcpEnabled);
+  setCheck('chk-mouse-invert', settings.mouseInvert === true);
 
   if (!sliderDragging) {
     updateScaleSliderVisual(settings.scale);
@@ -165,6 +168,7 @@ function syncMenuUI(): void {
   }
 
   engine.showKeyBubbles = settings.showKeyBubbles;
+  engine.mouseInvert = settings.mouseInvert === true;
   engine.setCatAppearance(activeCat?.id || 'black', activeCat);
   engine.setKeyboardConfig(kbLayout, kbOrient);
   if (!sliderDragging) {
@@ -598,6 +602,9 @@ async function bootstrap(): Promise<void> {
         break;
       case 'toggle-sound':
         void applySettingsPatch({ soundEnabled: !settings.soundEnabled });
+        break;
+      case 'toggle-mouse-invert':
+        void applySettingsPatch({ mouseInvert: !(settings.mouseInvert === true) });
         break;
       case 'toggle-top':
         void applySettingsPatch({ alwaysOnTop: !settings.alwaysOnTop });
