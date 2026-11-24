@@ -15,6 +15,8 @@ class CatAudio {
   private ctx: AudioContext | null = null;
   private enabled = true;
   private alwaysOn = false;
+  /** 呼噜总音量系数（0 = 静音，1 = 默认，1.5 = 上限），常驻底噪与摸头呼噜共用 */
+  private volume = 1;
   private graphReady = false;
   private master: GainNode | null = null;
   private loopSource: AudioBufferSourceNode | null = null;
@@ -47,6 +49,19 @@ class CatAudio {
     return this.alwaysOn;
   }
 
+  /** 呼噜音量滑块：同时作用于「常驻底噪」和「摸头呼噜」 */
+  public setVolume(volume: number): void {
+    const raw = Number.isFinite(volume) ? volume : 1;
+    const next = Math.max(0, Math.min(1.5, raw));
+    if (Math.abs(next - this.volume) < 0.002) return;
+    this.volume = next;
+    if (this.enabled) this.applyLevel();
+  }
+
+  public getVolume(): number {
+    return this.volume;
+  }
+
   /** 0 = 静音, 1 = 摸到最舒服时的满档呼噜 */
   public setPurrIntensity(intensity: number): void {
     const next = Math.max(0, Math.min(1, intensity));
@@ -65,7 +80,8 @@ class CatAudio {
   }
 
   private applyLevel(): void {
-    const target = this.currentTarget();
+    // 音量系数在最外层统一相乘，所以两个音量来源（常驻 / 摸头）都跟随同一个滑块
+    const target = this.currentTarget() * this.volume;
     if (target <= 0.001) {
       if (this.appliedLevel <= 0.001 && !this.loopSource) return;
       // 停止抚摸：先自然衰减，约 2 秒后彻底停掉（省电，也让耳朵休息）

@@ -79,6 +79,11 @@ pub fn default_purr_always_on() -> bool {
     false
 }
 
+/// Master purr loudness multiplier (0.0 = mute, 1.0 = default, 1.5 = boost).
+pub fn default_purr_volume() -> f64 {
+    1.0
+}
+
 pub fn default_keyboard_layout() -> String {
     if cfg!(feature = "layout-108") {
         "108".to_string()
@@ -198,6 +203,8 @@ pub struct AppSettings {
     pub mouse_invert: bool,
     #[serde(default = "default_purr_always_on")]
     pub purr_always_on: bool,
+    #[serde(default = "default_purr_volume")]
+    pub purr_volume: f64,
 }
 
 impl Default for AppSettings {
@@ -231,6 +238,7 @@ impl Default for AppSettings {
             headphone_mode: default_headphone_mode(),
             mouse_invert: default_mouse_invert(),
             purr_always_on: default_purr_always_on(),
+            purr_volume: default_purr_volume(),
         }
     }
 }

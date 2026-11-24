@@ -30,6 +30,7 @@ interface AppSettings {
   headphoneMode?: 'auto' | 'on' | 'off';
   mouseInvert?: boolean;
   purrAlwaysOn?: boolean;
+  purrVolume?: number;
 }
 
 interface UpdateInfo {
@@ -88,10 +89,13 @@ let settings: AppSettings = {
   headphoneMode: 'off',
   mouseInvert: false,
   purrAlwaysOn: false,
+  purrVolume: 1,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
 let sliderDragging = false;
+let purrSliderDragging = false;
+let purrCommitTimer: number | null = null;
 let currentAppVersion = '5.1.0';
 let cachedUpdateInfo: UpdateInfo | null = null;
 let updateBusy = false;
@@ -102,6 +106,8 @@ const tabBodyEl = document.getElementById('menu-tab-body') as HTMLDivElement | n
 const breedPillsEl = document.getElementById('breed-pills') as HTMLDivElement;
 const scaleSliderEl = document.getElementById('scale-slider') as HTMLInputElement;
 const scaleValueEl = document.getElementById('scale-value') as HTMLButtonElement;
+const purrSliderEl = document.getElementById('purr-volume-slider') as HTMLInputElement | null;
+const purrValueEl = document.getElementById('purr-volume-value') as HTMLButtonElement | null;
 const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanElement;
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const btnObsHideEl = document.getElementById('btn-obs-hide') as HTMLButtonElement;
@@ -154,6 +160,18 @@ function updateScaleSliderVisual(scaleVal: number): void {
   }
 }
 
+function updatePurrVolumeVisual(volumeVal: number): void {
+  const pctNum = Math.round(Math.max(0, Math.min(150, volumeVal * 100)));
+  if (purrSliderEl) {
+    purrSliderEl.value = String(pctNum);
+    const fillPct = (pctNum / 150) * 100;
+    purrSliderEl.style.setProperty('--pct', `${fillPct.toFixed(1)}%`);
+  }
+  if (purrValueEl) {
+    purrValueEl.textContent = pctNum === 0 ? '静音' : `${pctNum}%`;
+  }
+}
+
 function renderBreedPills(): void {
   if (!breedPillsEl) return;
   breedPillsEl.innerHTML = '';
@@ -199,6 +217,9 @@ function syncUI(): void {
 
   if (!sliderDragging) {
     updateScaleSliderVisual(settings.scale);
+  }
+  if (!purrSliderDragging) {
+    updatePurrVolumeVisual(settings.purrVolume ?? 1);
   }
 
   const kbLayout: KeyboardLayoutId = normalizeLayoutId(settings.keyboardLayout);
@@ -472,6 +493,45 @@ async function bootstrap(): Promise<void> {
       sliderDragging = false;
       updateScaleSliderVisual(1.0);
       void applySettingsPatch({ scale: 1.0 });
+    });
+  }
+
+  if (purrSliderEl) {
+    purrSliderEl.addEventListener('pointerdown', () => {
+      purrSliderDragging = true;
+    });
+    // 菜单是独立窗口，声音在猫猫窗口里，所以节流后回写设置，让那边实时跟着调
+    purrSliderEl.addEventListener('input', () => {
+      purrSliderDragging = true;
+      const nextVolume = Math.max(0, Math.min(1.5, Number(purrSliderEl.value) / 100));
+      updatePurrVolumeVisual(nextVolume);
+      if (purrCommitTimer !== null) window.clearTimeout(purrCommitTimer);
+      purrCommitTimer = window.setTimeout(() => {
+        purrCommitTimer = null;
+        void applySettingsPatch({ purrVolume: nextVolume });
+      }, 120);
+    });
+    const commitPurrVolume = () => {
+      purrSliderDragging = false;
+      if (purrCommitTimer !== null) {
+        window.clearTimeout(purrCommitTimer);
+        purrCommitTimer = null;
+      }
+      const nextVolume = Math.max(0, Math.min(1.5, Number(purrSliderEl.value) / 100));
+      void applySettingsPatch({ purrVolume: nextVolume });
+    };
+    purrSliderEl.addEventListener('change', commitPurrVolume);
+    purrSliderEl.addEventListener('pointerup', () => {
+      purrSliderDragging = false;
+    });
+  }
+
+  if (purrValueEl) {
+    purrValueEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      purrSliderDragging = false;
+      updatePurrVolumeVisual(1.0);
+      void applySettingsPatch({ purrVolume: 1 });
     });
   }
 

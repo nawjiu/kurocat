@@ -319,6 +319,7 @@ fn get_mcp_config(state: State<'_, AppState>) -> String {
 #[tauri::command]
 fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSettings) -> AppSettings {
     patch.scale = patch.scale.clamp(0.20, 1.50);
+    patch.purr_volume = patch.purr_volume.clamp(0.0, 1.5);
     let clean_breed = sanitize_cat_id(&patch.cat_breed);
     patch.cat_breed = if cat_exists(&clean_breed) {
         clean_breed

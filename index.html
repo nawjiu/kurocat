@@ -74,6 +74,29 @@
           <button class="kb-pill" data-headphonemode="on" type="button">🎧 常戴</button>
         </div>
       </div>
+      <div class="menu-scale-row" id="purr-volume-row">
+        <div class="scale-header">
+          <span class="menu-scale-label">呼噜声音量（常驻 / 摸头共用）</span>
+          <button class="scale-value-btn" id="purr-volume-value" type="button" title="点击复位 100%">100%</button>
+        </div>
+        <div class="scale-slider-wrap">
+          <input
+            type="range"
+            id="purr-volume-slider"
+            class="scale-slider"
+            min="0"
+            max="150"
+            step="5"
+            value="100"
+          />
+          <div class="scale-ticks">
+            <span>静音</span>
+            <span class="scale-tick-mid">100%</span>
+            <span>150%</span>
+          </div>
+        </div>
+      </div>
+
       <div class="menu-sep"></div>
       <button class="menu-item" data-action="toggle-privacy" title="检测到输入密码时猫猫自动闭眼、大肥鱼双手捂眼并隐藏全部按键">
         <span>输密码自动闭眼防偷窥</span>

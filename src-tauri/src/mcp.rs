@@ -153,6 +153,7 @@ fn tool_definitions() -> Value {
                     "headphoneMode": { "type": "string", "enum": ["auto", "on", "off"], "description": "Gaming headset mode: 'auto' (automatically wears headphones when a PC game is active), 'on' (always on), or 'off'." },
                     "mouseInvert": { "type": "boolean", "description": "Cat-view mirror: the pet reacts to the mouse as if it were on the opposite side of the desk (both axes flipped)." },
                     "purrAlwaysOn": { "type": "boolean", "description": "Keep a soft idle purr running even when nobody is petting the cat." },
+                    "purrVolume": { "type": "number", "minimum": 0, "maximum": 1.5, "description": "Master purr loudness multiplier shared by the idle purr and the petting purr (0 = mute, 1 = default, 1.5 = loudest)." },
                     "scale": { "type": "number", "minimum": 0.2, "maximum": 1.5 },
                     "keyboardLayout": { "type": "string", "enum": ["65", "98", "108"], "description": "Physical keyboard layout: '65' compact, '98' 980-style with numpad (compact), '108' full-size." },
                     "keyboardOrientation": { "type": "string", "enum": ["cat", "viewer"] },
@@ -304,6 +305,9 @@ fn execute_tool(name: &str, args: &Value, on_change: &dyn Fn()) -> Value {
             }
             if let Some(b) = args.get("purrAlwaysOn").and_then(|v| v.as_bool()) {
                 s.purr_always_on = b;
+            }
+            if let Some(v) = args.get("purrVolume").and_then(|v| v.as_f64()) {
+                s.purr_volume = v.clamp(0.0, 1.5);
             }
             if let Some(layout) = args.get("keyboardLayout").and_then(|v| v.as_str()) {
                 s.keyboard_layout = crate::config::normalize_keyboard_layout(layout);

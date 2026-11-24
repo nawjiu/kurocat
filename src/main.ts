@@ -48,6 +48,7 @@ interface AppSettings {
   headphoneMode?: HeadphoneMode;
   mouseInvert?: boolean;
   purrAlwaysOn?: boolean;
+  purrVolume?: number;
 }
 
 type InputEvent =
@@ -116,6 +117,7 @@ let dismissedVersion: string | null = loadDismissedVersion();
 let currentToastKind: 'update' | 'transient' | null = null;
 let toastAutoHideTimer: number | null = null;
 let sliderDragging = false;
+let purrSliderDragging = false;
 let altOverride = false;
 let lastKnownLockState: boolean | null = null;
 let syncWin7OverlayFn: ((focusMenu?: boolean) => void) | null = null;
@@ -155,6 +157,7 @@ let settings: AppSettings = {
   headphoneMode: 'off',
   mouseInvert: false,
   purrAlwaysOn: false,
+  purrVolume: 1,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
@@ -165,6 +168,8 @@ const menuEl = document.getElementById('context-menu') as HTMLDivElement;
 const breedPillsEl = document.getElementById('breed-pills') as HTMLDivElement;
 const scaleSliderEl = document.getElementById('scale-slider') as HTMLInputElement;
 const scaleValueEl = document.getElementById('scale-value') as HTMLButtonElement;
+const purrSliderEl = document.getElementById('purr-volume-slider') as HTMLInputElement | null;
+const purrValueEl = document.getElementById('purr-volume-value') as HTMLButtonElement | null;
 const updateToastEl = document.getElementById('update-toast') as HTMLDivElement;
 const updateToastTextEl = document.getElementById('update-toast-text') as HTMLSpanElement;
 const btnToastInstallEl = document.getElementById('btn-toast-install') as HTMLButtonElement;
@@ -320,6 +325,18 @@ function updateScaleSliderVisual(scaleVal: number): void {
   }
 }
 
+function updatePurrVolumeVisual(volumeVal: number): void {
+  const pctNum = Math.round(Math.max(0, Math.min(150, volumeVal * 100)));
+  if (purrSliderEl) {
+    purrSliderEl.value = String(pctNum);
+    const fillPct = (pctNum / 150) * 100;
+    purrSliderEl.style.setProperty('--pct', `${fillPct.toFixed(1)}%`);
+  }
+  if (purrValueEl) {
+    purrValueEl.textContent = pctNum === 0 ? '静音' : `${pctNum}%`;
+  }
+}
+
 function syncMenuUI(): void {
   const setCheck = (id: string, on: boolean) => {
     const el = document.getElementById(id);
@@ -415,6 +432,8 @@ function syncMenuUI(): void {
   }
   catAudio.setEnabled(settings.soundEnabled);
   catAudio.setAlwaysOn(settings.purrAlwaysOn === true);
+  catAudio.setVolume(settings.purrVolume ?? 1);
+  if (!purrSliderDragging) updatePurrVolumeVisual(settings.purrVolume ?? 1);
   activateRenderEngine();
   if (tailPickerOpen) syncTailPickerSelection();
 }
@@ -928,6 +947,38 @@ async function bootstrap(): Promise<void> {
       sliderDragging = false;
       updateScaleSliderVisual(1.0);
       void applySettingsPatch({ scale: 1.0 });
+    });
+  }
+
+  if (purrSliderEl) {
+    purrSliderEl.addEventListener('pointerdown', () => {
+      purrSliderDragging = true;
+    });
+    // 拖动过程中直接改音量，可以边拖边听
+    purrSliderEl.addEventListener('input', () => {
+      purrSliderDragging = true;
+      const nextVolume = Math.max(0, Math.min(1.5, Number(purrSliderEl.value) / 100));
+      updatePurrVolumeVisual(nextVolume);
+      catAudio.setVolume(nextVolume);
+    });
+    const commitPurrVolume = () => {
+      purrSliderDragging = false;
+      const nextVolume = Math.max(0, Math.min(1.5, Number(purrSliderEl.value) / 100));
+      void applySettingsPatch({ purrVolume: nextVolume });
+    };
+    purrSliderEl.addEventListener('change', commitPurrVolume);
+    purrSliderEl.addEventListener('pointerup', () => {
+      purrSliderDragging = false;
+    });
+  }
+
+  if (purrValueEl) {
+    purrValueEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      purrSliderDragging = false;
+      updatePurrVolumeVisual(1.0);
+      catAudio.setVolume(1);
+      void applySettingsPatch({ purrVolume: 1 });
     });
   }
 

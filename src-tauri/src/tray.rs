@@ -80,6 +80,14 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         initial.sound_enabled,
         None::<&str>,
     )?;
+    let purr_always = CheckMenuItem::with_id(
+        app,
+        "purr_always",
+        "呼噜声常驻（不摸也小声呼噜）",
+        true,
+        initial.purr_always_on,
+        None::<&str>,
+    )?;
     let always_on_top = CheckMenuItem::with_id(
         app,
         "always_on_top",
@@ -276,6 +284,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &privacy_guard,
             &key_bubbles,
             &sound_toggle,
+            &purr_always,
             &always_on_top,
             &breed_menu,
             &kb_menu,
@@ -304,6 +313,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &privacy_guard,
             &key_bubbles,
             &sound_toggle,
+            &purr_always,
             &always_on_top,
             &breed_menu,
             &kb_menu,
@@ -332,6 +342,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &privacy_guard,
             &key_bubbles,
             &sound_toggle,
+            &purr_always,
             &always_on_top,
             &breed_menu,
             &kb_menu,
@@ -356,6 +367,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         let kb = key_bubbles.clone();
         let pg = privacy_guard.clone();
         let st = sound_toggle.clone();
+        let pa = purr_always.clone();
         let aot = always_on_top.clone();
         let auto = autostart.clone();
         let ot = obs_toggle.clone();
@@ -367,6 +379,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                 let _ = kb.set_checked(s.show_key_bubbles);
                 let _ = pg.set_checked(s.privacy_password_guard);
                 let _ = st.set_checked(s.sound_enabled);
+                let _ = pa.set_checked(s.purr_always_on);
                 let _ = aot.set_checked(s.always_on_top);
                 let _ = auto.set_checked(s.autostart);
                 let _ = ot.set_checked(s.obs_enabled);
@@ -487,6 +500,14 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     let enabled = s.sound_enabled;
                     crate::config::save_settings(&s);
                     let _ = sound_toggle.set_checked(enabled);
+                    let _ = app.emit("kuro-settings", s.clone());
+                }
+                "purr_always" => {
+                    let mut s = state.settings.lock().unwrap();
+                    s.purr_always_on = !s.purr_always_on;
+                    let on = s.purr_always_on;
+                    crate::config::save_settings(&s);
+                    let _ = purr_always.set_checked(on);
                     let _ = app.emit("kuro-settings", s.clone());
                 }
                 "always_on_top" => {
