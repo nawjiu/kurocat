@@ -363,7 +363,7 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'dot', label: '.', bubble: '.', row: 4, rowY: 4.25, uStart: 10.25, uWidth: 1, accent: 'ivory', vkCodes: [0xbe] },
   { id: 'slash', label: '/', bubble: '/', row: 4, rowY: 4.25, uStart: 11.25, uWidth: 1, accent: 'ivory', vkCodes: [0xbf] },
   { id: 'rshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 12.25, uWidth: 1.75, accent: 'slate', vkCodes: [0xa1] },
-  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'pale', vkCodes: [0x26] },
+  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: NUM98_X - 1.125, uWidth: 1, accent: 'pale', vkCodes: [0x26] },
   { id: 'np_1', label: '1', bubble: 'Num1', row: 4, rowY: 4.25, uStart: NUM98_X, uWidth: 1, accent: 'ivory', vkCodes: [0x61] },
   { id: 'np_2', label: '2', bubble: 'Num2', row: 4, rowY: 4.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x62] },
   { id: 'np_3', label: '3', bubble: 'Num3', row: 4, rowY: 4.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x63] },
@@ -377,10 +377,10 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'ralt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 10, uWidth: 1, accent: 'slate', vkCodes: [0xa5] },
   { id: 'fn', label: 'Fn', bubble: 'Fn', row: 5, rowY: 5.25, uStart: 11, uWidth: 1, accent: 'slate', vkCodes: [] },
   { id: 'rctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 12, uWidth: 1, accent: 'slate', vkCodes: [0xa3] },
-  // 方向键倒 T：← ↓ → 在底排，→ 正对数字区 1，↑ 在 ↓ 正上方
-  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: NUM98_X - 2, uWidth: 1, accent: 'pale', vkCodes: [0x25] },
-  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'pale', vkCodes: [0x28] },
-  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: NUM98_X, uWidth: 1, accent: 'pale', vkCodes: [0x27] },
+  // 方向键倒 T：← ↓ → 三键相邻，左右各留 0.125U（不跟数字区列对齐），↑ 在 ↓ 正上方
+  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: 13.125, uWidth: 1, accent: 'pale', vkCodes: [0x25] },
+  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: NUM98_X - 1.125, uWidth: 1, accent: 'pale', vkCodes: [0x28] },
+  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: NUM98_X - 0.125, uWidth: 1, accent: 'pale', vkCodes: [0x27] },
   // 0 在 2 下方、. Del 在 3 下方
   { id: 'np_0', label: '0', bubble: 'Num0', row: 5, rowY: 5.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x60] },
   { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x6e] },
