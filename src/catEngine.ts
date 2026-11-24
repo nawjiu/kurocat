@@ -2,6 +2,8 @@ import {
   KEYBOARD_KEYS_65,
   KEYBOARD_KEYS_108,
   getKeyboardLayout,
+  KEY_TONE_COLORS,
+  toneOf,
   isWideLayout,
   type KeySpec,
   type KeyboardLayoutId,
@@ -3579,6 +3581,11 @@ export class KuroCatEngine {
     const layout = getKeyboardLayout(this.keyboardLayout);
     const isCatFacing = this.keyboardOrientation === 'cat';
     const is108 = isWideLayout(this.keyboardLayout);
+    // 98 配列复刻实拍键盘的奶白机壳，其它配列保持原来的深色外壳
+    const retroCase = this.keyboardLayout === '98';
+    const caseShell = retroCase ? '#e6ddca' : '#24262c';
+    const caseEdge = retroCase ? '#efe7d6' : '#363840';
+    const casePlate = retroCase ? '#f0e9db' : '#d4d6d1';
     const padX = 7;
     const padY = 6;
     const innerW = this.kbWidth - padX * 2;
@@ -3623,8 +3630,9 @@ export class KuroCatEngine {
       const y = -innerH / 2 + screenRowTop * rowH + gap * 0.5 + press * 2.0;
       const h = rSpan * rowH - gap - 0.8;
 
-      let topColor = '#f8f8f5';
-      let sideColor = '#d0d2cc';
+      const toneColors = KEY_TONE_COLORS[toneOf(key.accent)];
+      let topColor = toneColors.top;
+      let sideColor = toneColors.side;
       if (press > 0.14) {
         topColor = this.customSkin
           ? this.customSkin.accentColor
@@ -3643,12 +3651,6 @@ export class KuroCatEngine {
       } else if (isTailSelected) {
         topColor = pickerAccentTop;
         sideColor = pickerAccentSide;
-      } else if (key.accent === 'orange') {
-        topColor = '#f4a524';
-        sideColor = '#c27a10';
-      } else if (key.accent === 'mod') {
-        topColor = '#efefeb';
-        sideColor = '#c7c9c3';
       }
 
       // When overdrawing an animated key onto the cached base, paint the inner keybed strip behind it
@@ -3703,9 +3705,7 @@ export class KuroCatEngine {
         targetCtx.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
         targetCtx.fillStyle = press > 0.14 || isTailSelected
           ? '#111214'
-          : key.accent === 'orange'
-            ? '#ffffff'
-            : '#2c2f36';
+          : toneColors.legend;
         targetCtx.textAlign = 'center';
         targetCtx.textBaseline = 'middle';
         targetCtx.fillText(legend, 0, 0);
@@ -3748,14 +3748,14 @@ export class KuroCatEngine {
           cg.fill();
           cg.restore();
 
-          cg.fillStyle = '#24262c';
-          cg.strokeStyle = '#363840';
+          cg.fillStyle = caseShell;
+          cg.strokeStyle = caseEdge;
           cg.lineWidth = 1.1;
           this.trapezoidPath(cg, topHalfW, botHalfW, -halfH, halfH, 6.5);
           cg.fill();
           cg.stroke();
 
-          cg.fillStyle = '#d4d6d1';
+          cg.fillStyle = casePlate;
           this.trapezoidPath(cg, topHalfW - 5, botHalfW - 5, -halfH + 4, halfH - 4, 3.5);
           cg.fill();
 
@@ -3788,14 +3788,14 @@ export class KuroCatEngine {
       ctx.fill();
       ctx.restore();
 
-      ctx.fillStyle = '#24262c';
+      ctx.fillStyle = caseShell;
       ctx.strokeStyle = pickerAccentTop;
       ctx.lineWidth = 2.0;
       this.trapezoidPath(ctx, topHalfW, botHalfW, -halfH, halfH, 6.5);
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = '#d4d6d1';
+      ctx.fillStyle = casePlate;
       this.trapezoidPath(ctx, topHalfW - 5, botHalfW - 5, -halfH + 4, halfH - 4, 3.5);
       ctx.fill();
 

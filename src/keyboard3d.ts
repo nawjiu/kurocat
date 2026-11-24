@@ -2,9 +2,12 @@ import * as THREE from 'three';
 import {
   getKeyboardLayout,
   isWideLayout,
+  KEY_TONE_COLORS,
   resolveKeyByVk,
+  toneOf,
   type KeyboardLayoutId,
   type KeySpec,
+  type KeyTone,
 } from './keyboardLayout';
 import type { KeyboardOrientation } from './catEngine';
 
@@ -293,50 +296,63 @@ function getKeycapAtlas(
   const cached = keyAtlasCache.get(cacheKey);
   if (cached) return cached;
 
-  const unique: Array<{ key: string; label: string; accent: 'base' | 'mod' | 'orange' }> = [];
+  const toneOrder: KeyTone[] = ['base', 'mod', 'ivory', 'slate', 'pale', 'orange'];
+  const grouped = new Map<KeyTone, Array<{ key: string; label: string; tone: KeyTone }>>();
   const seen = new Set<string>();
   for (const spec of keys) {
-    const accent: 'base' | 'mod' | 'orange' =
-      spec.accent === 'orange' ? 'orange' : spec.accent === 'mod' ? 'mod' : 'base';
+    const tone = toneOf(spec.accent);
     const label = spec.id === 'space' ? '' : spec.id === 'esc' ? 'Esc' : spec.label;
-    const tk = `${label}|${accent}`;
-    if (!seen.has(tk)) {
-      seen.add(tk);
-      unique.push({ key: tk, label, accent });
+    const tk = `${label}|${tone}`;
+    if (seen.has(tk)) continue;
+    seen.add(tk);
+    let list = grouped.get(tone);
+    if (!list) {
+      list = [];
+      grouped.set(tone, list);
     }
+    list.push({ key: tk, label, tone });
   }
 
-  // Place orange accent tiles on their own isolated bottom row so mipmaps NEVER bleed orange onto cream keys!
-  const nonOrange = unique.filter((u) => u.accent !== 'orange');
-  const orangeOnly = unique.filter((u) => u.accent === 'orange');
-
   const CELL = 128;
-  const cols = nonOrange.length <= 56 ? 8 : 16;
-  const nonOrangeRows = Math.ceil(nonOrange.length / cols);
-  const totalRows = nonOrangeRows + (orangeOnly.length > 0 ? 1 : 0);
+  const tileTotal = Array.from(grouped.values()).reduce((n, l) => n + l.length, 0);
+  const cols = tileTotal <= 48 ? 8 : 16;
+
+  // Every tone gets its own solid row band, filled edge to edge with that tone's colour, so
+  // mipmaps can only ever bleed a colour into itself (dark slate never smudges the ivory caps).
+  let rowCursor = 0;
+  const bands = toneOrder
+    .filter((tone) => (grouped.get(tone)?.length ?? 0) > 0)
+    .map((tone) => {
+      const list = grouped.get(tone) as Array<{ key: string; label: string; tone: KeyTone }>;
+      const height = Math.ceil(list.length / cols);
+      const band = { list, start: rowCursor, height };
+      rowCursor += height;
+      return band;
+    });
+
   const atlasW = cols * CELL;
-  const atlasH = totalRows <= 8 ? 1024 : 2048;
+  const atlasH = rowCursor <= 8 ? 1024 : rowCursor <= 16 ? 2048 : 4096;
 
   const c = document.createElement('canvas');
   c.width = atlasW;
   c.height = atlasH;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#f9f8f3';
+  g.fillStyle = KEY_TONE_COLORS.base.top;
   g.fillRect(0, 0, atlasW, atlasH);
 
   const rects = new Map<string, [number, number, number, number]>();
   const PAD = 10.0;
 
   const paintTile = (
-    item: { key: string; label: string; accent: 'base' | 'mod' | 'orange' },
+    item: { key: string; label: string; tone: KeyTone },
     col: number,
     row: number,
   ) => {
     const ox = col * CELL;
     const oy = row * CELL;
+    const tone = KEY_TONE_COLORS[item.tone];
 
-    g.fillStyle =
-      item.accent === 'orange' ? '#f59b2e' : item.accent === 'mod' ? '#e6e4db' : '#f9f8f3';
+    g.fillStyle = tone.top;
     g.fillRect(ox, oy, CELL, CELL);
 
     // Sculpted concave PBT keycap sheen
@@ -353,7 +369,7 @@ function getKeycapAtlas(
       const len = item.label.length;
       const fontSize = len >= 4 ? 29 : len === 3 ? 35 : len === 2 ? 42 : 52;
       g.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
-      g.fillStyle = item.accent === 'orange' ? '#ffffff' : '#2b2d34';
+      g.fillStyle = tone.legend;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText(item.label, 0, 2);
@@ -368,16 +384,11 @@ function getKeycapAtlas(
     rects.set(item.key, [u0, v0, du, dv]);
   };
 
-  for (let i = 0; i < nonOrange.length; i++) {
-    paintTile(nonOrange[i], i % cols, Math.floor(i / cols));
-  }
-  if (orangeOnly.length > 0) {
-    // Place orange tiles on the bottom-most atlas row for a full-row mipmap buffer + 10px per-tile padding!
-    const orangeRow = Math.floor(atlasH / CELL) - 1;
-    g.fillStyle = '#f59b2e';
-    g.fillRect(0, orangeRow * CELL, atlasW, CELL);
-    for (let i = 0; i < orangeOnly.length; i++) {
-      paintTile(orangeOnly[i], i % cols, orangeRow);
+  for (const band of bands) {
+    g.fillStyle = KEY_TONE_COLORS[band.list[0].tone].top;
+    g.fillRect(0, band.start * CELL, atlasW, band.height * CELL);
+    for (let i = 0; i < band.list.length; i++) {
+      paintTile(band.list[i], i % cols, band.start + Math.floor(i / cols));
     }
   }
 
@@ -525,9 +536,14 @@ export class KeyboardAndMouse3D {
   private readonly kbShadowMat: THREE.MeshBasicMaterial;
   private readonly shadowTex = makeSoftShadowTexture();
 
-  private readonly sideColorBase = new THREE.Color('#dad7cd');
-  private readonly sideColorMod = new THREE.Color('#c4c0b4');
-  private readonly sideColorOrange = new THREE.Color('#c4741a');
+  private readonly sideColors: Record<KeyTone, THREE.Color> = {
+    base: new THREE.Color(KEY_TONE_COLORS.base.side),
+    mod: new THREE.Color(KEY_TONE_COLORS.mod.side),
+    orange: new THREE.Color(KEY_TONE_COLORS.orange.side),
+    ivory: new THREE.Color(KEY_TONE_COLORS.ivory.side),
+    slate: new THREE.Color(KEY_TONE_COLORS.slate.side),
+    pale: new THREE.Color(KEY_TONE_COLORS.pale.side),
+  };
   private readonly whiteColor = new THREE.Color('#ffffff');
 
   private keys = new Map<string, KeyEntry3D>();
@@ -832,10 +848,12 @@ export class KeyboardAndMouse3D {
     const baseGeo = makeRoundedSlabGeo(W, D, this.boardH, 0.068, 0);
     const bezelGeo = makeRoundedSlabGeo(W - 0.014, D - 0.014, 0.014, 0.060, this.boardH - 0.008);
     const plateGeo = makeRoundedSlabGeo(W - 0.062, D - 0.062, 0.008, 0.044, this.boardH + 0.004);
+    // 98 配列复刻实拍键盘的奶白外壳；其余配列保留原来的深色外壳
+    const retroCase = layoutId === '98';
     const chassisGeo = mergeStaticGeometries([
-      { geo: baseGeo, color: '#202229' },
-      { geo: bezelGeo, color: '#2c2f38' },
-      { geo: plateGeo, color: '#181a20' },
+      { geo: baseGeo, color: retroCase ? '#ddd2bd' : '#202229' },
+      { geo: bezelGeo, color: retroCase ? '#e9e0cd' : '#2c2f38' },
+      { geo: plateGeo, color: retroCase ? '#f0e9db' : '#181a20' },
     ]);
     baseGeo.dispose();
     bezelGeo.dispose();
@@ -888,19 +906,11 @@ export class KeyboardAndMouse3D {
       sideInst.setMatrixAt(i, this.tmpMat);
       topInst.setMatrixAt(i, this.tmpMat);
 
-      const accent: 'base' | 'mod' | 'orange' =
-        spec.accent === 'orange' ? 'orange' : spec.accent === 'mod' ? 'mod' : 'base';
-      sideInst.setColorAt(
-        i,
-        accent === 'orange'
-          ? this.sideColorOrange
-          : accent === 'mod'
-            ? this.sideColorMod
-            : this.sideColorBase,
-      );
+      const tone = toneOf(spec.accent);
+      sideInst.setColorAt(i, this.sideColors[tone]);
 
       const legendText = spec.id === 'space' ? '' : spec.id === 'esc' ? 'Esc' : spec.label;
-      const rect = atlas.rects.get(`${legendText}|${accent}`) ?? [0, 0, 0.1, 0.1];
+      const rect = atlas.rects.get(`${legendText}|${tone}`) ?? [0, 0, 0.1, 0.1];
       uvRects[i * 4] = rect[0];
       uvRects[i * 4 + 1] = rect[1];
       uvRects[i * 4 + 2] = rect[2];

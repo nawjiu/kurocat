@@ -9,8 +9,44 @@ export interface KeySpec {
   rowSpan?: number; // vertical span in key units (defaults to 1; 2 for Numpad + and Numpad Enter)
   uStart: number; // horizontal unit column start
   uWidth: number; // width in standard 1U key units
-  accent?: 'orange' | 'mod' | 'normal';
+  accent?: KeyAccent;
   vkCodes: number[];
+}
+
+/**
+ * Keycap accents. `orange` / `mod` are the stock 65% & 108% palette; `ivory` / `slate` / `pale`
+ * reproduce the user's own 98-key board (cream alphas, dark blue-grey mods, cool grey-blue
+ * Esc/Enter/Space/arrows).
+ */
+export type KeyAccent = 'orange' | 'mod' | 'ivory' | 'slate' | 'pale' | 'normal';
+export type KeyTone = 'base' | 'mod' | 'orange' | 'ivory' | 'slate' | 'pale';
+
+/** top face / side skirt / legend colour for every keycap tone (shared by 2D canvas + 3D atlas). */
+export const KEY_TONE_COLORS: Record<KeyTone, { top: string; side: string; legend: string }> = {
+  base: { top: '#f9f8f3', side: '#dad7cd', legend: '#2b2d34' },
+  mod: { top: '#e6e4db', side: '#c4c0b4', legend: '#2b2d34' },
+  orange: { top: '#f59b2e', side: '#c4741a', legend: '#ffffff' },
+  // —— 实拍 98 键盘：奶白键帽 + 深蓝灰修饰键 + 浅灰蓝功能键 ——
+  ivory: { top: '#f0e9db', side: '#d2c8b6', legend: '#3b3f45' },
+  slate: { top: '#414f5e', side: '#2c3843', legend: '#eef2f5' },
+  pale: { top: '#ccd2d5', side: '#a7b0b5', legend: '#2f333a' },
+};
+
+export function toneOf(accent?: KeyAccent): KeyTone {
+  switch (accent) {
+    case 'orange':
+      return 'orange';
+    case 'mod':
+      return 'mod';
+    case 'ivory':
+      return 'ivory';
+    case 'slate':
+      return 'slate';
+    case 'pale':
+      return 'pale';
+    default:
+      return 'base';
+  }
 }
 
 export interface KeyboardLayoutDef {
@@ -225,131 +261,129 @@ export const KEYBOARD_KEYS_108: KeySpec[] = [
   { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM_X + 2, uWidth: 1, vkCodes: [0x6e] },
 ];
 
-// Authentic 98-key (980) layout, matched to the real GMK-style 98 board:
-//   * full-size numpad kept (4 columns, NumLock / / * - on top, + and NumEnter 2U tall);
-//   * no separate nav column — Insert/Home/PgUp/PgDn live on the F row above the numpad;
-//   * Delete sits right after F12, Backspace keeps its 2U width;
-//   * arrow cluster is an inverted-T sitting in the seam: ← ↓ → on the bottom row with → right
-//     UNDER the numpad "1", and ↑ stacked above ↓;
-//   * numpad bottom row shifts right by one column (0 under 2, . Del under 3).
-// Occupies 20.35U x 6.25 rows => 18 + 18 + 18 + 16 + 17 + 12 = 99 keys!
-const NUM98_X = 16.35;
-/** F-row Delete slot (right after F12, above Backspace). */
-const EDIT98_X = 15;
+// 98 键（980 配列）——完全对照实拍键盘：
+//   * 主键区 15U，数字小键盘紧贴主键区（只留 0.25U 的机壳缝，不再是一大块空洞）；
+//   * F 区三组之间只有 0.4U 的小缝（Esc | F1-F4 | F5-F8 | F9-F12），Del 紧跟 F12；
+//   * Ins / Home / PgUp / PgDn 横排在数字区正上方，与数字区四列严格对齐；
+//   * 方向键倒 T：→ 在数字区 1 的正下方，↑ 在 ↓ 的正上方，← 再往左一格；
+//   * 数字区底排：0 在 2 下方、. Del 在 3 下方，NumEnter 跨两行。
+// 19.25U x 6.25 行 => 18 + 18 + 18 + 16 + 17 + 12 = 99 个键位（真机就是这个数）
+// 主键区 15U 结束后留 0.25U 机壳缝，数字区从 15.25U 开始，两侧是拼在一起的
+const NUM98_X = 15.25;
 
 export const KEYBOARD_KEYS_98: KeySpec[] = [
-  // Row 0 (rowY=0): Orange Esc + F1..F12 (13 keys)
-  { id: 'esc', label: 'Esc', bubble: 'Esc', row: 0, rowY: 0, uStart: 0, uWidth: 1, accent: 'orange', vkCodes: [0x1b] },
-  { id: 'f1', label: 'F1', bubble: 'F1', row: 0, rowY: 0, uStart: 2, uWidth: 1, vkCodes: [0x70] },
-  { id: 'f2', label: 'F2', bubble: 'F2', row: 0, rowY: 0, uStart: 3, uWidth: 1, vkCodes: [0x71] },
-  { id: 'f3', label: 'F3', bubble: 'F3', row: 0, rowY: 0, uStart: 4, uWidth: 1, vkCodes: [0x72] },
-  { id: 'f4', label: 'F4', bubble: 'F4', row: 0, rowY: 0, uStart: 5, uWidth: 1, vkCodes: [0x73] },
-  { id: 'f5', label: 'F5', bubble: 'F5', row: 0, rowY: 0, uStart: 6.5, uWidth: 1, accent: 'mod', vkCodes: [0x74] },
-  { id: 'f6', label: 'F6', bubble: 'F6', row: 0, rowY: 0, uStart: 7.5, uWidth: 1, accent: 'mod', vkCodes: [0x75] },
-  { id: 'f7', label: 'F7', bubble: 'F7', row: 0, rowY: 0, uStart: 8.5, uWidth: 1, accent: 'mod', vkCodes: [0x76] },
-  { id: 'f8', label: 'F8', bubble: 'F8', row: 0, rowY: 0, uStart: 9.5, uWidth: 1, accent: 'mod', vkCodes: [0x77] },
-  { id: 'f9', label: 'F9', bubble: 'F9', row: 0, rowY: 0, uStart: 11, uWidth: 1, vkCodes: [0x78] },
-  { id: 'f10', label: 'F10', bubble: 'F10', row: 0, rowY: 0, uStart: 12, uWidth: 1, vkCodes: [0x79] },
-  { id: 'f11', label: 'F11', bubble: 'F11', row: 0, rowY: 0, uStart: 13, uWidth: 1, vkCodes: [0x7a] },
-  { id: 'f12', label: 'F12', bubble: 'F12', row: 0, rowY: 0, uStart: 14, uWidth: 1, vkCodes: [0x7b] },
-  { id: 'del', label: 'Del', bubble: 'Del', row: 0, rowY: 0, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2e] },
-  { id: 'ins', label: 'Ins', bubble: 'Ins', row: 0, rowY: 0, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2d] },
-  { id: 'home', label: 'Hm', bubble: 'Home', row: 0, rowY: 0, uStart: NUM98_X + 1, uWidth: 1, accent: 'mod', vkCodes: [0x24] },
-  { id: 'pgup', label: 'PU', bubble: 'PgUp', row: 0, rowY: 0, uStart: NUM98_X + 2, uWidth: 1, accent: 'mod', vkCodes: [0x21] },
-  { id: 'pgdn', label: 'PD', bubble: 'PgDn', row: 0, rowY: 0, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x22] },
+  // Row 0 (rowY=0): 浅灰蓝 Esc + F1..F4（奶白）| F5..F8（深蓝灰）| F9..F12（奶白）| Del + Ins/Home/PgUp/PgDn (18 keys)
+  { id: 'esc', label: 'Esc', bubble: 'Esc', row: 0, rowY: 0, uStart: 0, uWidth: 1, accent: 'pale', vkCodes: [0x1b] },
+  { id: 'f1', label: 'F1', bubble: 'F1', row: 0, rowY: 0, uStart: 1.45, uWidth: 1, accent: 'ivory', vkCodes: [0x70] },
+  { id: 'f2', label: 'F2', bubble: 'F2', row: 0, rowY: 0, uStart: 2.45, uWidth: 1, accent: 'ivory', vkCodes: [0x71] },
+  { id: 'f3', label: 'F3', bubble: 'F3', row: 0, rowY: 0, uStart: 3.45, uWidth: 1, accent: 'ivory', vkCodes: [0x72] },
+  { id: 'f4', label: 'F4', bubble: 'F4', row: 0, rowY: 0, uStart: 4.45, uWidth: 1, accent: 'ivory', vkCodes: [0x73] },
+  { id: 'f5', label: 'F5', bubble: 'F5', row: 0, rowY: 0, uStart: 5.85, uWidth: 1, accent: 'slate', vkCodes: [0x74] },
+  { id: 'f6', label: 'F6', bubble: 'F6', row: 0, rowY: 0, uStart: 6.85, uWidth: 1, accent: 'slate', vkCodes: [0x75] },
+  { id: 'f7', label: 'F7', bubble: 'F7', row: 0, rowY: 0, uStart: 7.85, uWidth: 1, accent: 'slate', vkCodes: [0x76] },
+  { id: 'f8', label: 'F8', bubble: 'F8', row: 0, rowY: 0, uStart: 8.85, uWidth: 1, accent: 'slate', vkCodes: [0x77] },
+  { id: 'f9', label: 'F9', bubble: 'F9', row: 0, rowY: 0, uStart: 10.25, uWidth: 1, accent: 'ivory', vkCodes: [0x78] },
+  { id: 'f10', label: 'F10', bubble: 'F10', row: 0, rowY: 0, uStart: 11.25, uWidth: 1, accent: 'ivory', vkCodes: [0x79] },
+  { id: 'f11', label: 'F11', bubble: 'F11', row: 0, rowY: 0, uStart: 12.25, uWidth: 1, accent: 'ivory', vkCodes: [0x7a] },
+  { id: 'f12', label: 'F12', bubble: 'F12', row: 0, rowY: 0, uStart: 13.25, uWidth: 1, accent: 'ivory', vkCodes: [0x7b] },
+  { id: 'del', label: 'Del', bubble: 'Del', row: 0, rowY: 0, uStart: 14.25, uWidth: 1, accent: 'slate', vkCodes: [0x2e] },
+  { id: 'ins', label: 'Ins', bubble: 'Ins', row: 0, rowY: 0, uStart: NUM98_X, uWidth: 1, accent: 'slate', vkCodes: [0x2d] },
+  { id: 'home', label: 'Hm', bubble: 'Home', row: 0, rowY: 0, uStart: NUM98_X + 1, uWidth: 1, accent: 'slate', vkCodes: [0x24] },
+  { id: 'pgup', label: 'PU', bubble: 'PgUp', row: 0, rowY: 0, uStart: NUM98_X + 2, uWidth: 1, accent: 'slate', vkCodes: [0x21] },
+  { id: 'pgdn', label: 'PD', bubble: 'PgDn', row: 0, rowY: 0, uStart: NUM98_X + 3, uWidth: 1, accent: 'slate', vkCodes: [0x22] },
 
   // Row 1 (rowY=1.25): ` 1..0 - = Backspace(2U) | Num / * - (18 keys)
-  { id: 'grave', label: '`', bubble: '`', row: 1, rowY: 1.25, uStart: 0, uWidth: 1, vkCodes: [0xc0] },
-  { id: '1', label: '1', bubble: '1', row: 1, rowY: 1.25, uStart: 1, uWidth: 1, vkCodes: [0x31] },
-  { id: '2', label: '2', bubble: '2', row: 1, rowY: 1.25, uStart: 2, uWidth: 1, vkCodes: [0x32] },
-  { id: '3', label: '3', bubble: '3', row: 1, rowY: 1.25, uStart: 3, uWidth: 1, vkCodes: [0x33] },
-  { id: '4', label: '4', bubble: '4', row: 1, rowY: 1.25, uStart: 4, uWidth: 1, vkCodes: [0x34] },
-  { id: '5', label: '5', bubble: '5', row: 1, rowY: 1.25, uStart: 5, uWidth: 1, vkCodes: [0x35] },
-  { id: '6', label: '6', bubble: '6', row: 1, rowY: 1.25, uStart: 6, uWidth: 1, vkCodes: [0x36] },
-  { id: '7', label: '7', bubble: '7', row: 1, rowY: 1.25, uStart: 7, uWidth: 1, vkCodes: [0x37] },
-  { id: '8', label: '8', bubble: '8', row: 1, rowY: 1.25, uStart: 8, uWidth: 1, vkCodes: [0x38] },
-  { id: '9', label: '9', bubble: '9', row: 1, rowY: 1.25, uStart: 9, uWidth: 1, vkCodes: [0x39] },
-  { id: '0', label: '0', bubble: '0', row: 1, rowY: 1.25, uStart: 10, uWidth: 1, vkCodes: [0x30] },
-  { id: 'minus', label: '-', bubble: '-', row: 1, rowY: 1.25, uStart: 11, uWidth: 1, vkCodes: [0xbd] },
-  { id: 'equal', label: '=', bubble: '=', row: 1, rowY: 1.25, uStart: 12, uWidth: 1, vkCodes: [0xbb] },
-  { id: 'bs', label: '⌫', bubble: '⌫', row: 1, rowY: 1.25, uStart: 13, uWidth: 2, accent: 'mod', vkCodes: [0x08] },
-  { id: 'numlk', label: 'Num', bubble: 'Num', row: 1, rowY: 1.25, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x90] },
-  { id: 'np_div', label: '/', bubble: 'Num/', row: 1, rowY: 1.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'mod', vkCodes: [0x6f] },
-  { id: 'np_mul', label: '*', bubble: 'Num*', row: 1, rowY: 1.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'mod', vkCodes: [0x6a] },
-  { id: 'np_sub', label: '-', bubble: 'Num-', row: 1, rowY: 1.25, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x6d] },
+  { id: 'grave', label: '`', bubble: '`', row: 1, rowY: 1.25, uStart: 0, uWidth: 1, accent: 'ivory', vkCodes: [0xc0] },
+  { id: '1', label: '1', bubble: '1', row: 1, rowY: 1.25, uStart: 1, uWidth: 1, accent: 'ivory', vkCodes: [0x31] },
+  { id: '2', label: '2', bubble: '2', row: 1, rowY: 1.25, uStart: 2, uWidth: 1, accent: 'ivory', vkCodes: [0x32] },
+  { id: '3', label: '3', bubble: '3', row: 1, rowY: 1.25, uStart: 3, uWidth: 1, accent: 'ivory', vkCodes: [0x33] },
+  { id: '4', label: '4', bubble: '4', row: 1, rowY: 1.25, uStart: 4, uWidth: 1, accent: 'ivory', vkCodes: [0x34] },
+  { id: '5', label: '5', bubble: '5', row: 1, rowY: 1.25, uStart: 5, uWidth: 1, accent: 'ivory', vkCodes: [0x35] },
+  { id: '6', label: '6', bubble: '6', row: 1, rowY: 1.25, uStart: 6, uWidth: 1, accent: 'ivory', vkCodes: [0x36] },
+  { id: '7', label: '7', bubble: '7', row: 1, rowY: 1.25, uStart: 7, uWidth: 1, accent: 'ivory', vkCodes: [0x37] },
+  { id: '8', label: '8', bubble: '8', row: 1, rowY: 1.25, uStart: 8, uWidth: 1, accent: 'ivory', vkCodes: [0x38] },
+  { id: '9', label: '9', bubble: '9', row: 1, rowY: 1.25, uStart: 9, uWidth: 1, accent: 'ivory', vkCodes: [0x39] },
+  { id: '0', label: '0', bubble: '0', row: 1, rowY: 1.25, uStart: 10, uWidth: 1, accent: 'ivory', vkCodes: [0x30] },
+  { id: 'minus', label: '-', bubble: '-', row: 1, rowY: 1.25, uStart: 11, uWidth: 1, accent: 'ivory', vkCodes: [0xbd] },
+  { id: 'equal', label: '=', bubble: '=', row: 1, rowY: 1.25, uStart: 12, uWidth: 1, accent: 'ivory', vkCodes: [0xbb] },
+  { id: 'bs', label: '⌫', bubble: '⌫', row: 1, rowY: 1.25, uStart: 13, uWidth: 2, accent: 'slate', vkCodes: [0x08] },
+  { id: 'numlk', label: 'Num', bubble: 'Num', row: 1, rowY: 1.25, uStart: NUM98_X, uWidth: 1, accent: 'slate', vkCodes: [0x90] },
+  { id: 'np_div', label: '/', bubble: 'Num/', row: 1, rowY: 1.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'slate', vkCodes: [0x6f] },
+  { id: 'np_mul', label: '*', bubble: 'Num*', row: 1, rowY: 1.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'slate', vkCodes: [0x6a] },
+  { id: 'np_sub', label: '-', bubble: 'Num-', row: 1, rowY: 1.25, uStart: NUM98_X + 3, uWidth: 1, accent: 'slate', vkCodes: [0x6d] },
 
   // Row 2 (rowY=2.25): Tab Q..P [ ] \(1.5U) | 7 8 9 +(2U tall) (18 keys)
-  { id: 'tab', label: '↹', bubble: 'Tab', row: 2, rowY: 2.25, uStart: 0, uWidth: 1.5, accent: 'mod', vkCodes: [0x09] },
-  { id: 'q', label: 'Q', bubble: 'Q', row: 2, rowY: 2.25, uStart: 1.5, uWidth: 1, vkCodes: [0x51] },
-  { id: 'w', label: 'W', bubble: 'W', row: 2, rowY: 2.25, uStart: 2.5, uWidth: 1, vkCodes: [0x57] },
-  { id: 'e', label: 'E', bubble: 'E', row: 2, rowY: 2.25, uStart: 3.5, uWidth: 1, vkCodes: [0x45] },
-  { id: 'r', label: 'R', bubble: 'R', row: 2, rowY: 2.25, uStart: 4.5, uWidth: 1, vkCodes: [0x52] },
-  { id: 't', label: 'T', bubble: 'T', row: 2, rowY: 2.25, uStart: 5.5, uWidth: 1, vkCodes: [0x54] },
-  { id: 'y', label: 'Y', bubble: 'Y', row: 2, rowY: 2.25, uStart: 6.5, uWidth: 1, vkCodes: [0x59] },
-  { id: 'u', label: 'U', bubble: 'U', row: 2, rowY: 2.25, uStart: 7.5, uWidth: 1, vkCodes: [0x55] },
-  { id: 'i', label: 'I', bubble: 'I', row: 2, rowY: 2.25, uStart: 8.5, uWidth: 1, vkCodes: [0x49] },
-  { id: 'o', label: 'O', bubble: 'O', row: 2, rowY: 2.25, uStart: 9.5, uWidth: 1, vkCodes: [0x4f] },
-  { id: 'p', label: 'P', bubble: 'P', row: 2, rowY: 2.25, uStart: 10.5, uWidth: 1, vkCodes: [0x50] },
-  { id: 'lb', label: '[', bubble: '[', row: 2, rowY: 2.25, uStart: 11.5, uWidth: 1, vkCodes: [0xdb] },
-  { id: 'rb', label: ']', bubble: ']', row: 2, rowY: 2.25, uStart: 12.5, uWidth: 1, vkCodes: [0xdd] },
-  { id: 'bslash', label: '\\', bubble: '\\', row: 2, rowY: 2.25, uStart: 13.5, uWidth: 1.5, accent: 'mod', vkCodes: [0xdc] },
-  { id: 'np_7', label: '7', bubble: 'Num7', row: 2, rowY: 2.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x67] },
-  { id: 'np_8', label: '8', bubble: 'Num8', row: 2, rowY: 2.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x68] },
-  { id: 'np_9', label: '9', bubble: 'Num9', row: 2, rowY: 2.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x69] },
-  { id: 'np_add', label: '+', bubble: 'Num+', row: 2, rowY: 2.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x6b] },
+  { id: 'tab', label: '↹', bubble: 'Tab', row: 2, rowY: 2.25, uStart: 0, uWidth: 1.5, accent: 'slate', vkCodes: [0x09] },
+  { id: 'q', label: 'Q', bubble: 'Q', row: 2, rowY: 2.25, uStart: 1.5, uWidth: 1, accent: 'ivory', vkCodes: [0x51] },
+  { id: 'w', label: 'W', bubble: 'W', row: 2, rowY: 2.25, uStart: 2.5, uWidth: 1, accent: 'ivory', vkCodes: [0x57] },
+  { id: 'e', label: 'E', bubble: 'E', row: 2, rowY: 2.25, uStart: 3.5, uWidth: 1, accent: 'ivory', vkCodes: [0x45] },
+  { id: 'r', label: 'R', bubble: 'R', row: 2, rowY: 2.25, uStart: 4.5, uWidth: 1, accent: 'ivory', vkCodes: [0x52] },
+  { id: 't', label: 'T', bubble: 'T', row: 2, rowY: 2.25, uStart: 5.5, uWidth: 1, accent: 'ivory', vkCodes: [0x54] },
+  { id: 'y', label: 'Y', bubble: 'Y', row: 2, rowY: 2.25, uStart: 6.5, uWidth: 1, accent: 'ivory', vkCodes: [0x59] },
+  { id: 'u', label: 'U', bubble: 'U', row: 2, rowY: 2.25, uStart: 7.5, uWidth: 1, accent: 'ivory', vkCodes: [0x55] },
+  { id: 'i', label: 'I', bubble: 'I', row: 2, rowY: 2.25, uStart: 8.5, uWidth: 1, accent: 'ivory', vkCodes: [0x49] },
+  { id: 'o', label: 'O', bubble: 'O', row: 2, rowY: 2.25, uStart: 9.5, uWidth: 1, accent: 'ivory', vkCodes: [0x4f] },
+  { id: 'p', label: 'P', bubble: 'P', row: 2, rowY: 2.25, uStart: 10.5, uWidth: 1, accent: 'ivory', vkCodes: [0x50] },
+  { id: 'lb', label: '[', bubble: '[', row: 2, rowY: 2.25, uStart: 11.5, uWidth: 1, accent: 'ivory', vkCodes: [0xdb] },
+  { id: 'rb', label: ']', bubble: ']', row: 2, rowY: 2.25, uStart: 12.5, uWidth: 1, accent: 'ivory', vkCodes: [0xdd] },
+  { id: 'bslash', label: '\\', bubble: '\\', row: 2, rowY: 2.25, uStart: 13.5, uWidth: 1.5, accent: 'ivory', vkCodes: [0xdc] },
+  { id: 'np_7', label: '7', bubble: 'Num7', row: 2, rowY: 2.25, uStart: NUM98_X, uWidth: 1, accent: 'ivory', vkCodes: [0x67] },
+  { id: 'np_8', label: '8', bubble: 'Num8', row: 2, rowY: 2.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x68] },
+  { id: 'np_9', label: '9', bubble: 'Num9', row: 2, rowY: 2.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x69] },
+  { id: 'np_add', label: '+', bubble: 'Num+', row: 2, rowY: 2.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'pale', vkCodes: [0x6b] },
 
   // Row 3 (rowY=3.25): Caps A..L ; ' Enter(2.25U) | 4 5 6 (16 keys)
-  { id: 'caps', label: '⇪', bubble: 'Caps', row: 3, rowY: 3.25, uStart: 0, uWidth: 1.75, accent: 'mod', vkCodes: [0x14] },
-  { id: 'a', label: 'A', bubble: 'A', row: 3, rowY: 3.25, uStart: 1.75, uWidth: 1, vkCodes: [0x41] },
-  { id: 's', label: 'S', bubble: 'S', row: 3, rowY: 3.25, uStart: 2.75, uWidth: 1, vkCodes: [0x53] },
-  { id: 'd', label: 'D', bubble: 'D', row: 3, rowY: 3.25, uStart: 3.75, uWidth: 1, vkCodes: [0x44] },
-  { id: 'f', label: 'F', bubble: 'F', row: 3, rowY: 3.25, uStart: 4.75, uWidth: 1, vkCodes: [0x46] },
-  { id: 'g', label: 'G', bubble: 'G', row: 3, rowY: 3.25, uStart: 5.75, uWidth: 1, vkCodes: [0x47] },
-  { id: 'h', label: 'H', bubble: 'H', row: 3, rowY: 3.25, uStart: 6.75, uWidth: 1, vkCodes: [0x48] },
-  { id: 'j', label: 'J', bubble: 'J', row: 3, rowY: 3.25, uStart: 7.75, uWidth: 1, vkCodes: [0x4a] },
-  { id: 'k', label: 'K', bubble: 'K', row: 3, rowY: 3.25, uStart: 8.75, uWidth: 1, vkCodes: [0x4b] },
-  { id: 'l', label: 'L', bubble: 'L', row: 3, rowY: 3.25, uStart: 9.75, uWidth: 1, vkCodes: [0x4c] },
-  { id: 'semi', label: ';', bubble: ';', row: 3, rowY: 3.25, uStart: 10.75, uWidth: 1, vkCodes: [0xba] },
-  { id: 'quote', label: "'", bubble: "'", row: 3, rowY: 3.25, uStart: 11.75, uWidth: 1, vkCodes: [0xde] },
-  { id: 'enter', label: '↵', bubble: '↵', row: 3, rowY: 3.25, uStart: 12.75, uWidth: 2.25, accent: 'mod', vkCodes: [0x0d] },
-  { id: 'np_4', label: '4', bubble: 'Num4', row: 3, rowY: 3.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x64] },
-  { id: 'np_5', label: '5', bubble: 'Num5', row: 3, rowY: 3.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x65] },
-  { id: 'np_6', label: '6', bubble: 'Num6', row: 3, rowY: 3.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x66] },
+  { id: 'caps', label: '⇪', bubble: 'Caps', row: 3, rowY: 3.25, uStart: 0, uWidth: 1.75, accent: 'slate', vkCodes: [0x14] },
+  { id: 'a', label: 'A', bubble: 'A', row: 3, rowY: 3.25, uStart: 1.75, uWidth: 1, accent: 'ivory', vkCodes: [0x41] },
+  { id: 's', label: 'S', bubble: 'S', row: 3, rowY: 3.25, uStart: 2.75, uWidth: 1, accent: 'ivory', vkCodes: [0x53] },
+  { id: 'd', label: 'D', bubble: 'D', row: 3, rowY: 3.25, uStart: 3.75, uWidth: 1, accent: 'ivory', vkCodes: [0x44] },
+  { id: 'f', label: 'F', bubble: 'F', row: 3, rowY: 3.25, uStart: 4.75, uWidth: 1, accent: 'ivory', vkCodes: [0x46] },
+  { id: 'g', label: 'G', bubble: 'G', row: 3, rowY: 3.25, uStart: 5.75, uWidth: 1, accent: 'ivory', vkCodes: [0x47] },
+  { id: 'h', label: 'H', bubble: 'H', row: 3, rowY: 3.25, uStart: 6.75, uWidth: 1, accent: 'ivory', vkCodes: [0x48] },
+  { id: 'j', label: 'J', bubble: 'J', row: 3, rowY: 3.25, uStart: 7.75, uWidth: 1, accent: 'ivory', vkCodes: [0x4a] },
+  { id: 'k', label: 'K', bubble: 'K', row: 3, rowY: 3.25, uStart: 8.75, uWidth: 1, accent: 'ivory', vkCodes: [0x4b] },
+  { id: 'l', label: 'L', bubble: 'L', row: 3, rowY: 3.25, uStart: 9.75, uWidth: 1, accent: 'ivory', vkCodes: [0x4c] },
+  { id: 'semi', label: ';', bubble: ';', row: 3, rowY: 3.25, uStart: 10.75, uWidth: 1, accent: 'ivory', vkCodes: [0xba] },
+  { id: 'quote', label: "'", bubble: "'", row: 3, rowY: 3.25, uStart: 11.75, uWidth: 1, accent: 'ivory', vkCodes: [0xde] },
+  { id: 'enter', label: '↵', bubble: '↵', row: 3, rowY: 3.25, uStart: 12.75, uWidth: 2.25, accent: 'pale', vkCodes: [0x0d] },
+  { id: 'np_4', label: '4', bubble: 'Num4', row: 3, rowY: 3.25, uStart: NUM98_X, uWidth: 1, accent: 'ivory', vkCodes: [0x64] },
+  { id: 'np_5', label: '5', bubble: 'Num5', row: 3, rowY: 3.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x65] },
+  { id: 'np_6', label: '6', bubble: 'Num6', row: 3, rowY: 3.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x66] },
 
-  // Row 4 (rowY=4.25): LShift Z..M , . / RShift(1.75U) | ↑ | 1 2 3 NumEnter(2U tall, orange) (17 keys)
-  { id: 'lshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 0, uWidth: 2.25, accent: 'mod', vkCodes: [0xa0, 0x10] },
-  { id: 'z', label: 'Z', bubble: 'Z', row: 4, rowY: 4.25, uStart: 2.25, uWidth: 1, vkCodes: [0x5a] },
-  { id: 'x', label: 'X', bubble: 'X', row: 4, rowY: 4.25, uStart: 3.25, uWidth: 1, vkCodes: [0x58] },
-  { id: 'c', label: 'C', bubble: 'C', row: 4, rowY: 4.25, uStart: 4.25, uWidth: 1, vkCodes: [0x43] },
-  { id: 'v', label: 'V', bubble: 'V', row: 4, rowY: 4.25, uStart: 5.25, uWidth: 1, vkCodes: [0x56] },
-  { id: 'b', label: 'B', bubble: 'B', row: 4, rowY: 4.25, uStart: 6.25, uWidth: 1, vkCodes: [0x42] },
-  { id: 'n', label: 'N', bubble: 'N', row: 4, rowY: 4.25, uStart: 7.25, uWidth: 1, vkCodes: [0x4e] },
-  { id: 'm', label: 'M', bubble: 'M', row: 4, rowY: 4.25, uStart: 8.25, uWidth: 1, vkCodes: [0x4d] },
-  { id: 'comma', label: ',', bubble: ',', row: 4, rowY: 4.25, uStart: 9.25, uWidth: 1, vkCodes: [0xbc] },
-  { id: 'dot', label: '.', bubble: '.', row: 4, rowY: 4.25, uStart: 10.25, uWidth: 1, vkCodes: [0xbe] },
-  { id: 'slash', label: '/', bubble: '/', row: 4, rowY: 4.25, uStart: 11.25, uWidth: 1, vkCodes: [0xbf] },
-  { id: 'rshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 12.25, uWidth: 1.75, accent: 'orange', vkCodes: [0xa1] },
-  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'mod', vkCodes: [0x26] },
-  { id: 'np_1', label: '1', bubble: 'Num1', row: 4, rowY: 4.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x61] },
-  { id: 'np_2', label: '2', bubble: 'Num2', row: 4, rowY: 4.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x62] },
-  { id: 'np_3', label: '3', bubble: 'Num3', row: 4, rowY: 4.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x63] },
-  { id: 'np_ent', label: '↵', bubble: 'Num↵', row: 4, rowY: 4.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'orange', vkCodes: [VK_NUMPAD_ENTER] },
+  // Row 4 (rowY=4.25): LShift Z..M , . / RShift(1.75U) | ↑ | 1 2 3 NumEnter(2U tall) (17 keys)
+  { id: 'lshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 0, uWidth: 2.25, accent: 'slate', vkCodes: [0xa0, 0x10] },
+  { id: 'z', label: 'Z', bubble: 'Z', row: 4, rowY: 4.25, uStart: 2.25, uWidth: 1, accent: 'ivory', vkCodes: [0x5a] },
+  { id: 'x', label: 'X', bubble: 'X', row: 4, rowY: 4.25, uStart: 3.25, uWidth: 1, accent: 'ivory', vkCodes: [0x58] },
+  { id: 'c', label: 'C', bubble: 'C', row: 4, rowY: 4.25, uStart: 4.25, uWidth: 1, accent: 'ivory', vkCodes: [0x43] },
+  { id: 'v', label: 'V', bubble: 'V', row: 4, rowY: 4.25, uStart: 5.25, uWidth: 1, accent: 'ivory', vkCodes: [0x56] },
+  { id: 'b', label: 'B', bubble: 'B', row: 4, rowY: 4.25, uStart: 6.25, uWidth: 1, accent: 'ivory', vkCodes: [0x42] },
+  { id: 'n', label: 'N', bubble: 'N', row: 4, rowY: 4.25, uStart: 7.25, uWidth: 1, accent: 'ivory', vkCodes: [0x4e] },
+  { id: 'm', label: 'M', bubble: 'M', row: 4, rowY: 4.25, uStart: 8.25, uWidth: 1, accent: 'ivory', vkCodes: [0x4d] },
+  { id: 'comma', label: ',', bubble: ',', row: 4, rowY: 4.25, uStart: 9.25, uWidth: 1, accent: 'ivory', vkCodes: [0xbc] },
+  { id: 'dot', label: '.', bubble: '.', row: 4, rowY: 4.25, uStart: 10.25, uWidth: 1, accent: 'ivory', vkCodes: [0xbe] },
+  { id: 'slash', label: '/', bubble: '/', row: 4, rowY: 4.25, uStart: 11.25, uWidth: 1, accent: 'ivory', vkCodes: [0xbf] },
+  { id: 'rshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 12.25, uWidth: 1.75, accent: 'slate', vkCodes: [0xa1] },
+  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'pale', vkCodes: [0x26] },
+  { id: 'np_1', label: '1', bubble: 'Num1', row: 4, rowY: 4.25, uStart: NUM98_X, uWidth: 1, accent: 'ivory', vkCodes: [0x61] },
+  { id: 'np_2', label: '2', bubble: 'Num2', row: 4, rowY: 4.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x62] },
+  { id: 'np_3', label: '3', bubble: 'Num3', row: 4, rowY: 4.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x63] },
+  { id: 'np_ent', label: '↵', bubble: 'Num↵', row: 4, rowY: 4.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'pale', vkCodes: [VK_NUMPAD_ENTER] },
 
   // Row 5 (rowY=5.25): Ctrl Win Alt Space(6.25U) Alt Fn Ctrl | ← ↓ → 0 . (12 keys)
-  { id: 'lctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 0, uWidth: 1.25, accent: 'mod', vkCodes: [0xa2, 0x11] },
-  { id: 'lwin', label: 'Win', bubble: 'Win', row: 5, rowY: 5.25, uStart: 1.25, uWidth: 1.25, accent: 'mod', vkCodes: [0x5b] },
-  { id: 'lalt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 2.5, uWidth: 1.25, accent: 'mod', vkCodes: [0xa4, 0x12] },
-  { id: 'space', label: '␣', bubble: '␣', row: 5, rowY: 5.25, uStart: 3.75, uWidth: 6.25, vkCodes: [0x20] },
-  { id: 'ralt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 10, uWidth: 1, accent: 'mod', vkCodes: [0xa5] },
-  { id: 'fn', label: 'Fn', bubble: 'Fn', row: 5, rowY: 5.25, uStart: 11, uWidth: 1, accent: 'mod', vkCodes: [] },
-  { id: 'rctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 12, uWidth: 1, accent: 'mod', vkCodes: [0xa3] },
-  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: NUM98_X - 2, uWidth: 1, accent: 'mod', vkCodes: [0x25] },
-  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'mod', vkCodes: [0x28] },
-  // → 正好在数字区 1 的正下方（真机排布）
-  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x27] },
-  // 0 与 . Del 跟在 → 右边，分别落在 2、3 的下方
-  { id: 'np_0', label: '0', bubble: 'Num0', row: 5, rowY: 5.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x60] },
-  { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x6e] },
+  { id: 'lctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 0, uWidth: 1.25, accent: 'slate', vkCodes: [0xa2, 0x11] },
+  { id: 'lwin', label: 'Win', bubble: 'Win', row: 5, rowY: 5.25, uStart: 1.25, uWidth: 1.25, accent: 'slate', vkCodes: [0x5b] },
+  { id: 'lalt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 2.5, uWidth: 1.25, accent: 'slate', vkCodes: [0xa4, 0x12] },
+  { id: 'space', label: '␣', bubble: '␣', row: 5, rowY: 5.25, uStart: 3.75, uWidth: 6.25, accent: 'pale', vkCodes: [0x20] },
+  { id: 'ralt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 10, uWidth: 1, accent: 'slate', vkCodes: [0xa5] },
+  { id: 'fn', label: 'Fn', bubble: 'Fn', row: 5, rowY: 5.25, uStart: 11, uWidth: 1, accent: 'slate', vkCodes: [] },
+  { id: 'rctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 12, uWidth: 1, accent: 'slate', vkCodes: [0xa3] },
+  // 方向键倒 T：← ↓ → 在底排，→ 正对数字区 1，↑ 在 ↓ 正上方
+  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: NUM98_X - 2, uWidth: 1, accent: 'pale', vkCodes: [0x25] },
+  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'pale', vkCodes: [0x28] },
+  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: NUM98_X, uWidth: 1, accent: 'pale', vkCodes: [0x27] },
+  // 0 在 2 下方、. Del 在 3 下方
+  { id: 'np_0', label: '0', bubble: 'Num0', row: 5, rowY: 5.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'ivory', vkCodes: [0x60] },
+  { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'ivory', vkCodes: [0x6e] },
 ];
 
 export const KEYBOARD_KEYS = KEYBOARD_KEYS_65;
@@ -363,7 +397,7 @@ export const KEYBOARD_LAYOUTS: Record<KeyboardLayoutId, KeyboardLayoutDef> = {
   },
   '98': {
     id: '98',
-    totalUnits: 20.35,
+    totalUnits: 19.25,
     totalRows: 6.25,
     keys: KEYBOARD_KEYS_98,
   },

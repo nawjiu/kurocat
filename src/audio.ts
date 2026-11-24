@@ -11,8 +11,12 @@ const RELEASE_TAIL_MS = 2000;
 const ALWAYS_ON_LEVEL = 0.32;
 /** 主输出增益上限，避免样本本身偏响时破音 */
 const MAX_GAIN = 0.42;
-/** 按住小猫时的哼唧音量（0-1，独立于呼噜音量滑块） */
+/** 按住小猫时的哼唧基础音量（还会再乘上「呼噜声音量」滑块，两者联动） */
 const SQUEAK_LEVEL = 0.72;
+/** 按住多久之后才开始哼唧（毫秒）——太短会把随手点一下也算成抚摸 */
+const SQUEAK_HOLD_DELAY_MS = 1000;
+/** 一旦开始叫，最少叫满多久（毫秒），避免刚出声就被掐断 */
+const SQUEAK_MIN_PLAY_MS = 2000;
 
 class CatAudio {
   private ctx: AudioContext | null = null;
@@ -34,6 +38,9 @@ class CatAudio {
   private squeakSource: AudioBufferSourceNode | null = null;
   private squeakGain: GainNode | null = null;
   private squeakHeld = false;
+  private squeakArmTimer: number | null = null;
+  private squeakMinTimer: number | null = null;
+  private squeakStartedAt = 0;
 
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
@@ -41,38 +48,89 @@ class CatAudio {
       this.petIntensity = 0;
       this.rampTo(0, 0.06);
       this.scheduleStop(120);
-      this.stopSqueak();
+      this.killSqueak();
     } else {
       this.applyLevel();
     }
   }
 
-  /** 按住小猫：开始哼唧（循环播放，松开前一直叫） */
+  /** 按住小猫：满 1 秒后开始哼唧（循环播放，松开前一直叫） */
   public startSqueak(): void {
     this.squeakHeld = true;
+    this.clearSqueakMinTimer();
     if (!this.enabled) return;
     if (!this.ensureContext()) return;
     const ctx = this.ctx as AudioContext;
     if (ctx.state === 'suspended') {
       void ctx.resume().catch(() => {});
     }
+    // 已经在叫：把被“最少播放时长”压低的音量抬回来
     if (this.squeakSource) {
       if (this.squeakGain) {
-        this.squeakGain.gain.setTargetAtTime(SQUEAK_LEVEL, ctx.currentTime, 0.04);
+        this.squeakGain.gain.setTargetAtTime(this.squeakTarget(), ctx.currentTime, 0.04);
       }
       return;
     }
-    void this.playSqueakLoop();
+    if (this.squeakArmTimer !== null) return;
+    this.squeakArmTimer = window.setTimeout(() => {
+      this.squeakArmTimer = null;
+      if (!this.squeakHeld) return;
+      void this.playSqueakLoop();
+    }, SQUEAK_HOLD_DELAY_MS);
   }
 
-  /** 松开鼠标：哼唧立刻衰减停下 */
+  /** 松开鼠标：不足 2 秒的话把剩下的叫完再停，超过 2 秒立刻淡出 */
   public stopSqueak(): void {
     this.squeakHeld = false;
+    this.clearSqueakArmTimer();
+    if (!this.squeakSource) return;
+    const remain = SQUEAK_MIN_PLAY_MS - (performance.now() - this.squeakStartedAt);
+    if (remain > 0) {
+      if (this.squeakMinTimer !== null) return;
+      this.squeakMinTimer = window.setTimeout(() => {
+        this.squeakMinTimer = null;
+        if (this.squeakHeld) return;
+        this.fadeOutSqueak();
+      }, remain);
+      return;
+    }
+    this.fadeOutSqueak();
+  }
+
+  /** 关掉声音 / 切静音等场景：不给尾巴，直接掐断 */
+  private killSqueak(): void {
+    this.squeakHeld = false;
+    this.clearSqueakArmTimer();
+    this.clearSqueakMinTimer();
+    this.fadeOutSqueak();
+  }
+
+  private clearSqueakArmTimer(): void {
+    if (this.squeakArmTimer !== null) {
+      window.clearTimeout(this.squeakArmTimer);
+      this.squeakArmTimer = null;
+    }
+  }
+
+  private clearSqueakMinTimer(): void {
+    if (this.squeakMinTimer !== null) {
+      window.clearTimeout(this.squeakMinTimer);
+      this.squeakMinTimer = null;
+    }
+  }
+
+  /** 哼唧跟呼噜共用同一个音量滑块 */
+  private squeakTarget(): number {
+    return Math.min(1.1, SQUEAK_LEVEL * this.volume);
+  }
+
+  private fadeOutSqueak(): void {
     const ctx = this.ctx;
     const src = this.squeakSource;
     const gain = this.squeakGain;
     this.squeakSource = null;
     this.squeakGain = null;
+    this.squeakStartedAt = 0;
     if (!ctx || !src) return;
     if (gain) {
       gain.gain.cancelScheduledValues(ctx.currentTime);
@@ -106,7 +164,8 @@ class CatAudio {
     }
     this.squeakGain = gain;
     this.squeakSource = src;
-    gain.gain.setTargetAtTime(SQUEAK_LEVEL, ctx.currentTime, 0.045);
+    this.squeakStartedAt = performance.now();
+    gain.gain.setTargetAtTime(this.squeakTarget(), ctx.currentTime, 0.045);
   }
 
   private loadSqueak(): Promise<AudioBuffer | null> {
@@ -149,6 +208,11 @@ class CatAudio {
     if (Math.abs(next - this.volume) < 0.002) return;
     this.volume = next;
     if (this.enabled) this.applyLevel();
+    // 正在哼唧时立刻跟着滑块变响/变轻
+    if (this.squeakGain && this.ctx) {
+      this.squeakGain.gain.setTargetAtTime(this.squeakTarget(), this.ctx.currentTime, 0.05);
+      if (next <= 0.001) this.killSqueak();
+    }
   }
 
   public getVolume(): number {
