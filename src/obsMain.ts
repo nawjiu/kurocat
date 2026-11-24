@@ -6,7 +6,7 @@ import {
 } from './catEngine';
 import { catAudio } from './audio';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
-import type { KeyboardLayoutId } from './keyboardLayout';
+import { normalizeLayoutId, type KeyboardLayoutId } from './keyboardLayout';
 import type { CollarColorId, KuroCatEngine3D } from './catEngine3d';
 
 type ObsRenderMode = '2d' | '3d';
@@ -80,7 +80,7 @@ const overrideHeadphones: ObsHeadphoneMode | null =
   overrideHeadphoneRaw === 'auto' || overrideHeadphoneRaw === 'on' || overrideHeadphoneRaw === 'off'
     ? overrideHeadphoneRaw
     : null;
-const overrideLayout = params.get('layout') === '108' ? '108' : params.get('layout') === '65' ? '65' : null;
+const overrideLayout = params.get('layout') ? normalizeLayoutId(params.get('layout')) : null;
 const overrideOrient = params.get('orient') === 'viewer' ? 'viewer' : params.get('orient') === 'cat' ? 'cat' : null;
 const overrideBubbles = params.has('bubbles') ? params.get('bubbles') !== '0' && params.get('bubbles') !== 'false' : null;
 const rawScaleParam = params.get('scale');
@@ -180,7 +180,7 @@ function applyState(): void {
   const breedId = overrideBreed || currentSettings.catBreed || 'black';
   const activeCat = catList.find((c) => c.id === breedId) ?? catList[0];
   const layout: KeyboardLayoutId =
-    overrideLayout || (currentSettings.keyboardLayout === '108' ? '108' : '65');
+    overrideLayout || normalizeLayoutId(currentSettings.keyboardLayout);
   const orient: KeyboardOrientation =
     overrideOrient || (currentSettings.keyboardOrientation === 'viewer' ? 'viewer' : 'cat');
   const tailMode: TailKeyMode =
@@ -225,6 +225,7 @@ function handleInput(p: InputEvent): void {
       else engine.onKeyUp(p.vk);
       break;
     case 'mouseMove': {
+      // 猫视角鼠标反转（与主窗口保持一致，OBS 输出画面同步镜像）
       const nx = currentSettings.mouseInvert === true ? 1 - p.nx : p.nx;
       const ny = currentSettings.mouseInvert === true ? 1 - p.ny : p.ny;
       if (active3d && engine3d) {

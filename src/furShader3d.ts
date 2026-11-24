@@ -407,7 +407,23 @@ export class FurShaderSystem {
       uSpotPos: { value: Array.from({ length: MAX_CUSTOM_SPOTS }, () => new THREE.Vector4()) },
       uSpotCol: { value: Array.from({ length: MAX_CUSTOM_SPOTS }, () => new THREE.Vector4()) },
       uSpotMeta: { value: Array.from({ length: MAX_CUSTOM_SPOTS }, () => new THREE.Vector4()) },
+      // GPU body+head deformation uniforms (eliminates 4,745-vert CPU deformation + computeVertexNormals + PCIe upload every frame!)
+      uBend: { value: new THREE.Vector4(0, 0, 0, 0) }, // (x, z, squash, bellySwell)
+      uHeadRot: { value: new THREE.Vector3(-0.04, 0, 0) }, // (pitch, yaw, roll) Euler YXZ
     };
+  }
+
+  public setBodyDeform(
+    bx: number,
+    bz: number,
+    squash: number,
+    bellySwell: number,
+    pitch: number,
+    yaw: number,
+    roll: number,
+  ): void {
+    (this.uniforms.uBend.value as THREE.Vector4).set(bx, bz, squash, bellySwell);
+    (this.uniforms.uHeadRot.value as THREE.Vector3).set(pitch, yaw, roll);
   }
 
   public createMaterial(part: FurPart, side = 0): THREE.ShaderMaterial {
@@ -417,6 +433,10 @@ export class FurShaderSystem {
     const vertexShader = `
       attribute vec3 rest;
       attribute float along;
+      #ifdef CAT_BODY
+        uniform vec4 uBend;
+        uniform vec3 uHeadRot;
+      #endif
       varying vec3 vRest;
       varying vec3 vNormal;
       varying vec3 vViewDir;
@@ -428,8 +448,64 @@ export class FurShaderSystem {
           vRest = position;
         #endif
         vAlong = along;
-        vNormal = normalize(normalMatrix * normal);
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+
+        vec3 localPos = position;
+        vec3 localNrm = normal;
+
+        #ifdef CAT_BODY
+          const float HEAD_CY = 1.56;
+          const float BODY_H = 1.98;
+          const float W_HEAD = 0.8226517; // pow(smoothstep(0.14, 1.75, 1.56), 1.45)
+          const float S_HEAD = 0.8588995; // smoothstep(0.18, 1.98, 1.56)
+
+          float x0 = position.x;
+          float y0 = position.y;
+          float z0 = position.z;
+
+          float headW = smoothstep(1.14, 1.44, y0);
+          float sSpine = smoothstep(0.14, 1.75, y0);
+          float wTorso = pow(max(0.0, sSpine), 1.45);
+          float w = mix(wTorso, W_HEAD, headW);
+          float sw = smoothstep(0.18, BODY_H, y0);
+          float headSinkY = HEAD_CY * (1.0 - uBend.z * S_HEAD);
+          float swell = 1.0 + uBend.w * smoothstep(1.30, 0.65, y0) * smoothstep(0.0, 0.25, y0);
+
+          vec3 pDef = vec3(x0 * swell, y0, z0 * swell);
+
+          if (headW > 0.001) {
+            float ax = uHeadRot.x * headW;
+            float ay = uHeadRot.y * headW;
+            float az = uHeadRot.z * headW;
+            float cx = cos(ax), sx = sin(ax);
+            float cy = cos(ay), sy = sin(ay);
+            float cz = cos(az), sz = sin(az);
+            // Exact column-major R = Ry(ay) * Rx(ax) * Rz(az) matching THREE.Euler(..., 'YXZ')
+            mat3 rot = mat3(
+              cy * cz + sy * sx * sz,   cx * sz,   -sy * cz + cy * sx * sz,
+              -cy * sz + sy * sx * cz,  cx * cz,    sy * sz + cy * sx * cz,
+              sy * cx,                 -sx,         cy * cx
+            );
+            vec3 rel = vec3(pDef.x, pDef.y - HEAD_CY, pDef.z);
+            rel = rot * rel;
+            pDef = vec3(rel.x, rel.y + HEAD_CY, rel.z);
+            localNrm = rot * localNrm;
+          }
+
+          // Subtle analytical normal tilt for torso spine shear + squash
+          float torsoFactor = 1.0 - headW;
+          if (torsoFactor > 0.001) {
+            float dwApprox = 0.68 * torsoFactor;
+            localNrm.y -= (uBend.x * localNrm.x + uBend.y * localNrm.z) * dwApprox;
+            localNrm.y /= max(0.75, 1.0 - uBend.z * sw * torsoFactor);
+          }
+
+          float torsoY = pDef.y * (1.0 - uBend.z * sw);
+          float headRigidY = pDef.y - HEAD_CY + headSinkY;
+          localPos = vec3(pDef.x + uBend.x * w, mix(torsoY, headRigidY, headW), pDef.z + uBend.y * w);
+        #endif
+
+        vNormal = normalize(normalMatrix * localNrm);
+        vec4 mv = modelViewMatrix * vec4(localPos, 1.0);
         #ifdef ARM
           ${ARM_ROOT_PUSH_GLSL}
         #endif
@@ -480,63 +556,81 @@ export class FurShaderSystem {
           float headZone = smoothstep(1.22, 1.42, p.y);
           float torsoZone = 1.0 - smoothstep(1.18, 1.42, p.y);
 
-          // 1) Head markings (Ragdoll bicolor mask, Siamese face mask, Tabby M, Tuxedo blaze, Calico crown)
-          if (hp.z > -0.10) {
+          // Uniform-coherent early skips: solid Black Cat skips 100% of procedural pattern ALU ops!
+          float hasHeadMark = uPoints + uMuzzle + uTuxedo + uStripes;
+          if (hasHeadMark > 0.01 && hp.z > -0.10) {
             vec2 q = hp.xy;
-            // Colourpoint face mask (Siamese & Ragdoll upper cap/temples)
-            float maskDist = length((q - vec2(0.0, 0.08)) / vec2(0.95, 0.86));
-            float facePoint = (1.0 - smoothstep(0.62, 1.04, maskDist)) * smoothstep(-0.35, 0.05, q.y) * smoothstep(-0.08, 0.25, hp.z);
-            point = max(point, facePoint * headZone);
+            if (uPoints > 0.01) {
+              // Colourpoint face mask (Siamese & Ragdoll upper cap/temples)
+              float maskDist = length((q - vec2(0.0, 0.08)) / vec2(0.95, 0.86));
+              float facePoint = (1.0 - smoothstep(0.62, 1.04, maskDist)) * smoothstep(-0.35, 0.05, q.y) * smoothstep(-0.08, 0.25, hp.z);
+              point = max(point, facePoint * headZone);
+            }
 
-            // Soft pale cat muzzle pads & chin
-            float m = max(
-              max(blob(q, vec2(-0.18, -0.34), vec2(0.28, 0.24)), blob(q, vec2(0.18, -0.34), vec2(0.28, 0.24))),
-              blob(q, vec2(0.0, -0.54), vec2(0.32, 0.24))
+            if (uMuzzle > 0.01 || uTuxedo > 0.01) {
+              // Soft pale cat muzzle pads & chin
+              float m = max(
+                max(blob(q, vec2(-0.18, -0.34), vec2(0.28, 0.24)), blob(q, vec2(0.18, -0.34), vec2(0.28, 0.24))),
+                blob(q, vec2(0.0, -0.54), vec2(0.32, 0.24))
+              );
+              light = max(light, m * uMuzzle * headZone);
+
+              if (uTuxedo > 0.01) {
+                // Wide fluffy inverted-V Ragdoll / Tuxedo white blaze flowing smoothly down into the chest bib!
+                float blazePeak = (1.0 - smoothstep(0.0, 0.14, abs(q.x) - max(0.0, (0.34 - q.y) * 0.72)))
+                                * smoothstep(-0.75, -0.25, q.y)
+                                * (1.0 - smoothstep(0.26, 0.42, q.y))
+                                * smoothstep(0.12, 0.36, hp.z);
+                light = max(light, max(m, blazePeak) * uTuxedo * headZone);
+              }
+            }
+
+            if (uStripes > 0.01) {
+              // Tabby forehead "M" & cheek whiskers-line streaks
+              float mk = stroke(q, vec2(0.0, 0.36), vec2(0.0, 0.82), 0.072, 0.52);
+              mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.16, 0.34), vec2(0.30, 0.80), 0.062, 0.44));
+              mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.66, 0.04), vec2(0.96, 0.14), 0.058, 0.42));
+              mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.68, -0.18), vec2(0.96, -0.12), 0.052, 0.42));
+              dark = max(dark, mk * uStripes * headZone * smoothstep(0.05, 0.30, hp.z));
+            }
+          }
+
+          // 2) Seamless chest bib & lower torso markings (skip atan() entirely on solid breeds!)
+          float bib = 0.0;
+          if (uBib > 0.01 || uTuxedo > 0.01 || uStripes > 0.01 || uCalico > 0.01 || (uPoints > 0.5 && uTuxedo > 0.5)) {
+            float ang = abs(atan(p.x, p.z));
+            if (uBib > 0.01 || uTuxedo > 0.01 || uCalico > 0.01) {
+              float bibW = mix(0.46, 0.74, smoothstep(0.45, 1.35, p.y));
+              bib = (1.0 - smoothstep(bibW * 0.88, bibW, ang)) * (1.0 - smoothstep(1.30, 1.48, p.y));
+              light = max(light, bib * max(uBib, uTuxedo));
+            }
+
+            // Ragdoll soft warm taupe flanks along outer thighs
+            if (uPoints > 0.5 && uTuxedo > 0.5) {
+              float flank = smoothstep(0.75, 1.35, ang) * smoothstep(0.08, 0.45, p.y) * (1.0 - smoothstep(0.85, 1.25, p.y));
+              point = max(point, flank * 0.62);
+            }
+
+            if (uStripes > 0.01) {
+              // Tabby continuous flank & back rings
+              float wave = p.y * 0.88 + 0.05 * sin(ang * 3.0);
+              float reach = smoothstep(0.55, 1.05, ang);
+              float band = rings(wave, 5.2, 0.36 * reach) * step(0.18, p.y) * torsoZone;
+              dark = max(dark, band * uStripes);
+            }
+          }
+
+          if (uCalico > 0.01) {
+            // Calico organic head + side flank patches wrapping seamlessly into 3D shoulders!
+            pa = max(
+              blob3(p, vec3(-0.38, 1.82, 0.14), 0.44),
+              blob3(p, vec3(-0.54, 0.76, 0.08), 0.62) * (1.0 - bib * 0.85)
             );
-            light = max(light, m * uMuzzle * headZone);
-
-            // Wide fluffy inverted-V Ragdoll / Tuxedo white blaze flowing smoothly down into the chest bib!
-            float blazePeak = (1.0 - smoothstep(0.0, 0.14, abs(q.x) - max(0.0, (0.34 - q.y) * 0.72)))
-                            * smoothstep(-0.75, -0.25, q.y)
-                            * (1.0 - smoothstep(0.26, 0.42, q.y))
-                            * smoothstep(0.12, 0.36, hp.z);
-            light = max(light, max(m, blazePeak) * uTuxedo * headZone);
-
-            // Tabby forehead "M" & cheek whiskers-line streaks
-            float mk = stroke(q, vec2(0.0, 0.36), vec2(0.0, 0.82), 0.072, 0.52);
-            mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.16, 0.34), vec2(0.30, 0.80), 0.062, 0.44));
-            mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.66, 0.04), vec2(0.96, 0.14), 0.058, 0.42));
-            mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.68, -0.18), vec2(0.96, -0.12), 0.052, 0.42));
-            dark = max(dark, mk * uStripes * headZone * smoothstep(0.05, 0.30, hp.z));
+            pb = max(
+              blob3(p, vec3(0.44, 1.76, 0.06), 0.40),
+              blob3(p, vec3(0.56, 0.72, 0.06), 0.62) * (1.0 - bib * 0.85)
+            );
           }
-
-          // 2) Seamless chest bib & lower torso markings
-          float ang = abs(atan(p.x, p.z));
-          float bibW = mix(0.46, 0.74, smoothstep(0.45, 1.35, p.y));
-          float bib = (1.0 - smoothstep(bibW * 0.88, bibW, ang)) * (1.0 - smoothstep(1.30, 1.48, p.y));
-          light = max(light, bib * max(uBib, uTuxedo));
-
-          // Ragdoll soft warm taupe flanks along outer thighs
-          if (uPoints > 0.5 && uTuxedo > 0.5) {
-            float flank = smoothstep(0.75, 1.35, ang) * smoothstep(0.08, 0.45, p.y) * (1.0 - smoothstep(0.85, 1.25, p.y));
-            point = max(point, flank * 0.62);
-          }
-
-          // Tabby continuous flank & back rings
-          float wave = p.y * 0.88 + 0.05 * sin(ang * 3.0);
-          float reach = smoothstep(0.55, 1.05, ang);
-          float band = rings(wave, 5.2, 0.36 * reach) * step(0.18, p.y) * torsoZone;
-          dark = max(dark, band * uStripes);
-
-          // Calico organic head + side flank patches wrapping seamlessly into 3D shoulders!
-          pa = max(
-            blob3(p, vec3(-0.38, 1.82, 0.14), 0.44),
-            blob3(p, vec3(-0.54, 0.76, 0.08), 0.62) * (1.0 - bib * 0.85)
-          );
-          pb = max(
-            blob3(p, vec3(0.44, 1.76, 0.06), 0.40),
-            blob3(p, vec3(0.56, 0.72, 0.06), 0.62) * (1.0 - bib * 0.85)
-          );
         #endif
 
         #ifdef EAR
@@ -658,9 +752,9 @@ export class FurShaderSystem {
         vec3 n = normalize(vNormal);
         vec3 v = normalize(vViewDir);
         float ndv = clamp(dot(n, v), 0.0, 1.0);
-        float keyLit = dot(n, normalize(vec3(-0.28, 0.74, 0.62)));
-        float fillLit = dot(n, normalize(vec3(0.58, 0.24, 0.45)));
-        float fresnel = pow(1.0 - ndv, 2.35);
+        // Pre-normalized (-0.28, 0.74, 0.62) and (0.58, 0.24, 0.45)
+        float keyLit = dot(n, vec3(-0.2785, 0.7361, 0.6167));
+        float fillLit = dot(n, vec3(0.7510, 0.3108, 0.5827));
 
         // Keep crown-to-ear join seamlessly unified in value
         #ifdef CAT_BODY

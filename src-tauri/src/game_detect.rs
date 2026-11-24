@@ -389,30 +389,29 @@ pub fn classify_macos_foreground(bundle_id: &str, app_name: &str) -> Option<Stri
     None
 }
 
-/// Starts a super-lightweight background watcher that detects active PC games when
-/// `headphone_mode == "auto"`, emitting `kuro-game-active` to the frontend and OBS.
+/// Starts a super-lightweight background watcher that detects active PC games for BOTH
+/// automatic Game Eco Mode (30 FPS GPU-saving pacing) and optional auto gaming headphones,
+/// emitting `kuro-game-active` to the frontend and OBS.
 pub fn start_game_detection_watcher(
     app: AppHandle,
-    settings: Arc<Mutex<AppSettings>>,
+    _settings: Arc<Mutex<AppSettings>>,
     paused_guard: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
         let mut active = false;
         let mut active_name: Option<String> = None;
         let mut clear_streak: u8 = 0;
-        // ~7.2s Alt-Tab grace window (4 ticks * 1800ms) so quick Alt-Tabs don't flicker headphones
+        // ~8s Alt-Tab grace window (4 ticks * 2000ms) so quick Alt-Tabs don't flicker Eco Mode / headphones
         const CLEAR_GRACE_TICKS: u8 = 4;
+        #[cfg(windows)]
+        let mut fg_cache = win_impl::ForegroundCache::default();
 
         loop {
-            std::thread::sleep(Duration::from_millis(1800));
+            std::thread::sleep(Duration::from_millis(2000));
 
-            let auto_enabled = !paused_guard.load(Ordering::Relaxed)
-                && settings
-                    .lock()
-                    .map(|s| s.headphone_mode == "auto")
-                    .unwrap_or(false);
+            let watcher_enabled = !paused_guard.load(Ordering::Relaxed);
 
-            if !auto_enabled {
+            if !watcher_enabled {
                 if active {
                     active = false;
                     active_name = None;
@@ -430,7 +429,7 @@ pub fn start_game_detection_watcher(
             }
 
             #[cfg(windows)]
-            let detected = win_impl::detect_foreground_game();
+            let detected = win_impl::detect_foreground_game_cached(&mut fg_cache);
             #[cfg(target_os = "macos")]
             let detected = mac_impl::detect_foreground_game();
             #[cfg(all(not(windows), not(target_os = "macos")))]
@@ -484,21 +483,45 @@ mod win_impl {
         GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
-    pub fn detect_foreground_game() -> Option<String> {
+    #[derive(Default)]
+    pub struct ForegroundCache {
+        last_fg: isize,
+        last_d3d_fs: bool,
+        last_result: Option<String>,
+    }
+
+    pub fn detect_foreground_game_cached(cache: &mut ForegroundCache) -> Option<String> {
         unsafe {
             let fg = GetForegroundWindow();
             if fg.is_null() {
+                cache.last_fg = 0;
+                cache.last_d3d_fs = false;
+                cache.last_result = None;
                 return None;
+            }
+
+            let mut quns: i32 = 0;
+            let is_d3d_fs = SHQueryUserNotificationState(&mut quns) == 0
+                && quns == QUNS_RUNNING_D3D_FULL_SCREEN;
+            let fg_id = fg as isize;
+            if fg_id == cache.last_fg && is_d3d_fs == cache.last_d3d_fs {
+                return cache.last_result.clone();
             }
 
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(fg, &mut pid);
             if pid == 0 {
+                cache.last_fg = fg_id;
+                cache.last_d3d_fs = is_d3d_fs;
+                cache.last_result = None;
                 return None;
             }
 
             let hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if hproc.is_null() {
+                cache.last_fg = fg_id;
+                cache.last_d3d_fs = is_d3d_fs;
+                cache.last_result = None;
                 return None;
             }
 
@@ -507,6 +530,9 @@ mod win_impl {
             let ok = QueryFullProcessImageNameW(hproc, 0, path_buf.as_mut_ptr(), &mut path_len);
             CloseHandle(hproc);
             if ok == 0 || path_len == 0 {
+                cache.last_fg = fg_id;
+                cache.last_d3d_fs = is_d3d_fs;
+                cache.last_result = None;
                 return None;
             }
             let exe_path = String::from_utf16_lossy(&path_buf[..path_len as usize]);
@@ -519,11 +545,11 @@ mod win_impl {
                 String::new()
             };
 
-            let mut quns: i32 = 0;
-            let is_d3d_fs = SHQueryUserNotificationState(&mut quns) == 0
-                && quns == QUNS_RUNNING_D3D_FULL_SCREEN;
-
-            classify_windows_foreground(&exe_path, &window_title, is_d3d_fs)
+            let result = classify_windows_foreground(&exe_path, &window_title, is_d3d_fs);
+            cache.last_fg = fg_id;
+            cache.last_d3d_fs = is_d3d_fs;
+            cache.last_result = result.clone();
+            result
         }
     }
 }

@@ -1,11 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
+const QIANYI_API_LATEST: &str = "https://qianyi.one/kurocat/releases/latest.json";
 const REPO_API_LATEST: &str = "https://api.github.com/repos/qianyiai/kurocat/releases/latest";
 const REPO_RELEASES_PAGE: &str = "https://github.com/qianyiai/kurocat/releases/latest";
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+static LATEST_UPDATE_CACHE: OnceLock<Mutex<Option<UpdateInfo>>> = OnceLock::new();
+
+pub fn get_cached_update_info() -> Option<UpdateInfo> {
+    LATEST_UPDATE_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+fn store_cached_update_info(info: &UpdateInfo) {
+    if let Ok(mut guard) = LATEST_UPDATE_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *guard = Some(info.clone());
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -568,32 +586,42 @@ mod winhttp_client {
 }
 
 #[cfg(windows)]
-fn fetch_latest_release_json() -> Result<String, String> {
+fn fetch_json_from_url(url: &str, accept: Option<&str>, timeout_ms: i32) -> Result<String, String> {
     let ua = format!("KuroCat/{}", CURRENT_VERSION);
     let mut body = Vec::with_capacity(8192);
-    winhttp_client::get_stream(
-        REPO_API_LATEST,
-        &ua,
-        Some("Accept: application/vnd.github+json\r\n"),
-        20_000,
-        |chunk| {
-            if body.len() + chunk.len() > 2 * 1024 * 1024 {
-                return Err("更新接口响应过大".to_string());
-            }
-            body.extend_from_slice(chunk);
-            Ok(())
-        },
-    )?;
+    winhttp_client::get_stream(url, &ua, accept, timeout_ms, |chunk| {
+        if body.len() + chunk.len() > 2 * 1024 * 1024 {
+            return Err("更新接口响应过大".to_string());
+        }
+        body.extend_from_slice(chunk);
+        Ok(())
+    })?;
 
     let text = String::from_utf8_lossy(&body).trim().to_string();
     if text.is_empty() {
-        return Err("GitHub 返回空响应".to_string());
+        return Err("更新接口返回空响应".to_string());
     }
     Ok(text)
 }
 
-#[cfg(not(windows))]
+#[cfg(windows)]
 fn fetch_latest_release_json() -> Result<String, String> {
+    // Primary: fast domestic CDN mirror (no proxy needed, zero GitHub API rate limit)
+    if let Ok(text) = fetch_json_from_url(QIANYI_API_LATEST, Some("Accept: application/json\r\n"), 8_000) {
+        if serde_json::from_str::<GhRelease>(&text).is_ok() {
+            return Ok(text);
+        }
+    }
+    // Fallback: official GitHub Releases API
+    fetch_json_from_url(
+        REPO_API_LATEST,
+        Some("Accept: application/vnd.github+json\r\n"),
+        20_000,
+    )
+}
+
+#[cfg(not(windows))]
+fn fetch_json_from_url(url: &str, accept: &str, connect_secs: &str, max_secs: &str) -> Result<String, String> {
     use std::process::Command;
 
     let curl_bin = if cfg!(target_os = "macos") {
@@ -605,14 +633,14 @@ fn fetch_latest_release_json() -> Result<String, String> {
         .args([
             "-fsSL",
             "--connect-timeout",
-            "10",
+            connect_secs,
             "--max-time",
-            "20",
+            max_secs,
             "-H",
             &format!("User-Agent: KuroCat/{}", CURRENT_VERSION),
             "-H",
-            "Accept: application/vnd.github+json",
-            REPO_API_LATEST,
+            accept,
+            url,
         ])
         .output()
         .map_err(|e| format!("无法调用 curl 检查更新: {}", e))?;
@@ -620,7 +648,7 @@ fn fetch_latest_release_json() -> Result<String, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
-            "连接 GitHub 检查更新失败，请检查网络或代理".to_string()
+            "连接更新服务器失败，请检查网络或代理".to_string()
         } else {
             format!("检查更新失败: {}", stderr)
         });
@@ -628,9 +656,21 @@ fn fetch_latest_release_json() -> Result<String, String> {
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if text.is_empty() {
-        return Err("GitHub 返回空响应".to_string());
+        return Err("更新接口返回空响应".to_string());
     }
     Ok(text)
+}
+
+#[cfg(not(windows))]
+fn fetch_latest_release_json() -> Result<String, String> {
+    // Primary: fast domestic CDN mirror (no proxy needed, zero GitHub API rate limit)
+    if let Ok(text) = fetch_json_from_url(QIANYI_API_LATEST, "Accept: application/json", "5", "9") {
+        if serde_json::from_str::<GhRelease>(&text).is_ok() {
+            return Ok(text);
+        }
+    }
+    // Fallback: official GitHub Releases API
+    fetch_json_from_url(REPO_API_LATEST, "Accept: application/vnd.github+json", "10", "20")
 }
 
 pub fn check_latest_update() -> Result<UpdateInfo, String> {
@@ -647,7 +687,7 @@ pub fn check_latest_update() -> Result<UpdateInfo, String> {
     let install_kind = detect_install_kind();
     let asset = select_asset(&rel.assets, install_kind);
 
-    Ok(UpdateInfo {
+    let info = UpdateInfo {
         current_version: CURRENT_VERSION.to_string(),
         latest_version: latest_clean,
         has_update,
@@ -660,7 +700,9 @@ pub fn check_latest_update() -> Result<UpdateInfo, String> {
         asset_size: asset.and_then(|a| a.size),
         install_kind: install_kind.to_string(),
         notes_summary: summarize_notes(rel.body.as_deref()),
-    })
+    };
+    store_cached_update_info(&info);
+    Ok(info)
 }
 
 fn emit_progress(app: &AppHandle, stage: &str, message: impl Into<String>, info: Option<UpdateInfo>) {
@@ -1097,6 +1139,39 @@ mod tests {
             Some("05c1be2c444f5303770f6d59e216bc0ed7b69321fc44368e4ec231405570f950")
         );
         assert_eq!(extract_sha256(&Some("sha256:short".to_string())), None);
+    }
+
+    #[test]
+    fn qianyi_mirror_latest_json_parses_assets_and_digest() {
+        let sample = r#"{
+            "tag_name": "v9.9.9",
+            "html_url": "https://qianyi.one/kurocat/",
+            "body": "Performance & UX update",
+            "assets": [
+                {
+                    "name": "KuroCat-9.9.9-x64-setup.exe",
+                    "browser_download_url": "https://qianyi.one/kurocat/releases/v9.9.9/KuroCat-9.9.9-x64-setup.exe",
+                    "size": 2250000,
+                    "digest": "sha256:05c1be2c444f5303770f6d59e216bc0ed7b69321fc44368e4ec231405570f950"
+                },
+                {
+                    "name": "KuroCat-9.9.9-macos-universal.app.tar.gz",
+                    "browser_download_url": "https://qianyi.one/kurocat/releases/v9.9.9/KuroCat-9.9.9-macos-universal.app.tar.gz",
+                    "size": 3100000,
+                    "digest": "sha256:05c1be2c444f5303770f6d59e216bc0ed7b69321fc44368e4ec231405570f950"
+                }
+            ]
+        }"#;
+        let rel: GhRelease = serde_json::from_str(sample).expect("parse mirror json");
+        assert!(is_newer_version(&rel.tag_name, CURRENT_VERSION));
+        let win_asset = select_asset(&rel.assets, "windows-nsis").expect("select win nsis");
+        assert!(win_asset.browser_download_url.starts_with("https://qianyi.one/"));
+        assert_eq!(
+            extract_sha256(&win_asset.digest).as_deref(),
+            Some("05c1be2c444f5303770f6d59e216bc0ed7b69321fc44368e4ec231405570f950")
+        );
+        let mac_asset = select_asset(&rel.assets, "macos-app").expect("select mac tar.gz");
+        assert!(mac_asset.name.ends_with(".app.tar.gz"));
     }
 
     #[test]

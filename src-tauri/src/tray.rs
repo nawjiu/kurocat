@@ -7,7 +7,7 @@ use crate::{
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 
 fn default_tray_tooltip() -> &'static str {
     #[cfg(windows)]
@@ -43,10 +43,15 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         };
         MenuItem::with_id(app, "restart_as_admin", label, !elevated, None::<&str>)?
     };
+    let click_through_label = if cfg!(target_os = "macos") {
+        "锁定鼠标穿透（按住 Option 可临时操作）"
+    } else {
+        "锁定鼠标穿透（按住 Alt 可临时操作）"
+    };
     let click_through = CheckMenuItem::with_id(
         app,
         "click_through",
-        "锁定鼠标穿透（按住 Alt 可临时操作）",
+        click_through_label,
         true,
         initial.click_through_locked,
         None::<&str>,
@@ -167,6 +172,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     )?;
 
     let kb_65 = MenuItem::with_id(app, "kb_65", "65% 紧凑键盘", true, None::<&str>)?;
+    let kb_98 = MenuItem::with_id(app, "kb_98", "98 键（保留小键盘 · 紧凑）", true, None::<&str>)?;
     let kb_108 = MenuItem::with_id(app, "kb_108", "108 键全尺寸（含小键盘）", true, None::<&str>)?;
     let kb_sep = PredefinedMenuItem::separator(app)?;
     let kb_cat = MenuItem::with_id(app, "kb_cat", "面向猫咪（180° 真实视角）", true, None::<&str>)?;
@@ -175,7 +181,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         app,
         "键盘配列与方向",
         true,
-        &[&kb_65, &kb_108, &kb_sep, &kb_cat, &kb_viewer],
+        &[&kb_65, &kb_98, &kb_108, &kb_sep, &kb_cat, &kb_viewer],
     )?;
 
     let tail_smart = MenuItem::with_id(app, "tail_smart", "智能第三只手（忙时出尾）", true, None::<&str>)?;
@@ -343,6 +349,32 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
 
     let icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
     let pause_guard_for_click = pause_guard.clone();
+
+    // Keep tray checkmarks synchronized when settings change from right-click menu, toast, or MCP.
+    {
+        let ct = click_through.clone();
+        let kb = key_bubbles.clone();
+        let pg = privacy_guard.clone();
+        let st = sound_toggle.clone();
+        let aot = always_on_top.clone();
+        let auto = autostart.clone();
+        let ot = obs_toggle.clone();
+        let oh = obs_hide_pet.clone();
+        let mt = mcp_toggle.clone();
+        app.listen("kuro-settings", move |ev| {
+            if let Ok(s) = serde_json::from_str::<AppSettings>(ev.payload()) {
+                let _ = ct.set_checked(s.click_through_locked);
+                let _ = kb.set_checked(s.show_key_bubbles);
+                let _ = pg.set_checked(s.privacy_password_guard);
+                let _ = st.set_checked(s.sound_enabled);
+                let _ = aot.set_checked(s.always_on_top);
+                let _ = auto.set_checked(s.autostart);
+                let _ = ot.set_checked(s.obs_enabled);
+                let _ = oh.set_checked(s.obs_enabled && s.obs_hide_pet);
+                let _ = mt.set_checked(s.mcp_enabled);
+            }
+        });
+    }
 
     TrayIconBuilder::with_id("kuro-tray")
         .icon(icon)
@@ -569,6 +601,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                 "scale_125" => apply_scale_and_save(app, 1.25),
                 "scale_150" => apply_scale_and_save(app, 1.5),
                 "kb_65" => apply_keyboard_layout_and_save(app, "65"),
+                "kb_98" => apply_keyboard_layout_and_save(app, "98"),
                 "kb_108" => apply_keyboard_layout_and_save(app, "108"),
                 "kb_cat" => apply_keyboard_orientation_and_save(app, "cat"),
                 "kb_viewer" => apply_keyboard_orientation_and_save(app, "viewer"),

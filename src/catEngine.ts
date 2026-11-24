@@ -2,9 +2,11 @@ import {
   KEYBOARD_KEYS_65,
   KEYBOARD_KEYS_108,
   getKeyboardLayout,
+  isWideLayout,
   type KeySpec,
   type KeyboardLayoutId,
   formatBubbleForVk,
+  normalizeLayoutId,
   resolveKeyByVk,
 } from './keyboardLayout';
 import { catAudio } from './audio';
@@ -222,6 +224,13 @@ export class KuroCatEngine {
   private ctx: CanvasRenderingContext2D;
   private rafId: number | null = null;
   private idleFrameTimer: number | null = null;
+  private isIdlePacing = false;
+  private directRafPrevMs = 0;
+  private vsyncMs = 16.67;
+  private vsyncSamples = 0;
+  private gameActive = false;
+  private kbCacheCanvas: HTMLCanvasElement | null = null;
+  private kbCacheKey = '';
   private lastActivityAt = 0;
   private lastTime = 0;
   private elapsed = 0;
@@ -450,7 +459,7 @@ export class KuroCatEngine {
 
     const layout = getKeyboardLayout(this.keyboardLayout);
     const isCatFacing = this.keyboardOrientation === 'cat';
-    const is108 = this.keyboardLayout === '108';
+    const is108 = isWideLayout(this.keyboardLayout);
     const rowH = innerH / layout.totalRows;
     const unitW = innerW / layout.totalUnits;
     const gap = is108 ? 0.85 : 0.9;
@@ -499,7 +508,7 @@ export class KuroCatEngine {
     if (this.tailKeyMode === 'edge') {
       if (EDGE_PROTECTED_WASD_IDS.has(spec.id)) return false;
       const edgeThresholdX =
-        this.keyboardLayout === '108'
+        isWideLayout(this.keyboardLayout)
           ? this.kbCenterX + this.kbWidth * 0.22
           : this.kbCenterX + this.kbWidth * 0.34;
       return targetPoint.x >= edgeThresholdX;
@@ -542,7 +551,7 @@ export class KuroCatEngine {
 
   private syncLayoutPositions(): void {
     const isBigFish = this.catBreed === 'dafeiyu';
-    if (this.keyboardLayout === '108') {
+    if (isWideLayout(this.keyboardLayout)) {
       this.logicalW = 540;
       this.logicalH = 456;
       this.catCenterX = 278;
@@ -602,7 +611,7 @@ export class KuroCatEngine {
   }
 
   public setKeyboardConfig(layout: KeyboardLayoutId, orientation: KeyboardOrientation): void {
-    const nextLayout: KeyboardLayoutId = layout === '108' ? '108' : '65';
+    const nextLayout: KeyboardLayoutId = normalizeLayoutId(layout);
     const nextOrientation: KeyboardOrientation = orientation === 'viewer' ? 'viewer' : 'cat';
     const layoutChanged = this.keyboardLayout !== nextLayout;
     this.keyboardLayout = nextLayout;
@@ -648,7 +657,7 @@ export class KuroCatEngine {
       petEnergy: this.petEnergy,
       privacyMode: this.privacyMode,
       privacyTypingAt: this.privacyTypingAt,
-      is108: this.keyboardLayout === '108',
+      is108: isWideLayout(this.keyboardLayout),
     };
   }
 
@@ -865,6 +874,8 @@ export class KuroCatEngine {
   public start(): void {
     if (this.rafId !== null || this.idleFrameTimer !== null) return;
     this.lastTime = this.lastActivityAt = performance.now();
+    this.directRafPrevMs = 0;
+    this.isIdlePacing = false;
     this.rafId = requestAnimationFrame(this.renderFrame);
   }
 
@@ -873,10 +884,25 @@ export class KuroCatEngine {
     if (this.idleFrameTimer !== null) window.clearTimeout(this.idleFrameTimer);
     this.rafId = null;
     this.idleFrameTimer = null;
+    this.isIdlePacing = false;
+  }
+
+  public setGameActive(active: boolean): void {
+    this.gameActive = Boolean(active);
   }
 
   private readonly renderFrame = (now: number): void => {
     const frameId = this.rafId;
+    const workStart = performance.now();
+
+    if (this.directRafPrevMs > 0 && this.vsyncSamples < 8) {
+      const gap = now - this.directRafPrevMs;
+      if (gap >= 3.2 && gap <= 25) {
+        this.vsyncMs = this.vsyncSamples === 0 ? gap : Math.min(this.vsyncMs, gap);
+        this.vsyncSamples += 1;
+      }
+    }
+
     const dt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
     this.lastTime = now;
     this.update(dt, now);
@@ -884,24 +910,47 @@ export class KuroCatEngine {
     this.onAfterRender?.();
 
     if (this.rafId !== frameId) return;
-    if (now - this.lastActivityAt < IDLE_RENDER_AFTER_MS) {
+    const active = now - this.lastActivityAt < IDLE_RENDER_AFTER_MS;
+
+    // Smart adaptive frame pacing:
+    // - 60Hz normal mode: native direct rAF
+    // - 120-240Hz normal mode: 60 FPS cap
+    // - Game Eco Mode (foreground PC game detected): 30 FPS cap
+    // - Idle awake: ~18 FPS (55ms); Deep sleep: ~12 FPS (85ms)
+    if (active && (this.vsyncSamples < 8 || (!this.gameActive && this.vsyncMs >= 13.5))) {
+      this.isIdlePacing = false;
+      this.directRafPrevMs = now;
       this.rafId = requestAnimationFrame(this.renderFrame);
       return;
     }
 
+    this.directRafPrevMs = 0;
+    const workMs = performance.now() - workStart;
+    const targetMs = active
+      ? this.gameActive
+        ? 33.33
+        : 16.67
+      : this.sleepAmount > 0.95
+        ? 85
+        : Math.max(IDLE_RENDER_PAUSE_MS, 55);
+    const sleepMs = Math.max(4, Math.round(targetMs - workMs - this.vsyncMs * 0.35));
+
     // Pause after drawing so even a slow frame leaves CPU headroom on older hardware (Fixes #9).
     this.rafId = null;
+    this.isIdlePacing = !active;
     this.idleFrameTimer = window.setTimeout(() => {
       this.idleFrameTimer = null;
+      this.isIdlePacing = false;
       this.rafId = requestAnimationFrame(this.renderFrame);
-    }, IDLE_RENDER_PAUSE_MS);
+    }, sleepMs);
   };
 
   private wakeRendering(now = performance.now()): void {
     this.lastActivityAt = now;
-    if (this.idleFrameTimer === null) return;
+    if (this.idleFrameTimer === null || !this.isIdlePacing) return;
     window.clearTimeout(this.idleFrameTimer);
     this.idleFrameTimer = null;
+    this.isIdlePacing = false;
     this.rafId = requestAnimationFrame(this.renderFrame);
   }
 
@@ -992,7 +1041,7 @@ export class KuroCatEngine {
     const u = Math.max(0, Math.min(1, 1 - t)); // 0 at hips, 1 at head
     const shearCurve = u * u * (3 - 2 * u); // smoothstep from hips up to head!
     // Measured mouse-lean shift (-46px at head) + lively typing left-right body/head sway (+-25px)!
-    const leanAmp = this.keyboardLayout === '108' ? 76 : 46;
+    const leanAmp = isWideLayout(this.keyboardLayout) ? 76 : 46;
     const leanX = (this.spineLean * leanAmp + this.typingSway * 25 + this.strikeRock * 10) * shearCurve;
     const swayDipY = Math.abs(this.typingSway) * 4.0 * shearCurve;
     const sleepSinkY = this.sleepAmount * 16.5 * shearCurve;
@@ -1151,11 +1200,15 @@ export class KuroCatEngine {
     }
 
     const splitCol =
-      this.keyboardLayout === '108'
+      isWideLayout(this.keyboardLayout)
         ? isCatFacing
           ? 12.2
           : 8.4
-        : 7.5;
+        : this.keyboardLayout === '98'
+          ? isCatFacing
+            ? 9.85
+            : 6.05
+          : 7.5;
 
     if (spec.id === 'space') {
       if (activelyMousing) {
@@ -1566,7 +1619,7 @@ export class KuroCatEngine {
     if (this.bubbles.length >= 6) {
       this.bubbles.shift();
     }
-    const minX = this.keyboardLayout === '108' ? 145 : 125;
+    const minX = isWideLayout(this.keyboardLayout) ? 145 : 125;
     const maxX = this.logicalW - 105;
     const baseX = Math.max(minX, Math.min(maxX, keyX * 0.45 + this.kbCenterX * 0.55));
     const staggerY = 258 + ((this.nextBubbleId % 3) - 1) * 10 + (Math.random() - 0.5) * 6;
@@ -1593,7 +1646,7 @@ export class KuroCatEngine {
     const gap = 3.5;
     const totalW = widths.reduce((a, b) => a + b, 0) + gap * (count - 1);
     const anchor = this.kbCenterX + 12;
-    const leftBound = this.keyboardLayout === '108' ? 140 : 126;
+    const leftBound = isWideLayout(this.keyboardLayout) ? 140 : 126;
     const rightBound = this.logicalW - 82;
     let cursor = Math.max(leftBound, Math.min(rightBound - totalW, anchor - totalW * 0.5));
 
@@ -3525,7 +3578,7 @@ export class KuroCatEngine {
   private drawKeyboard(ctx: CanvasRenderingContext2D): void {
     const layout = getKeyboardLayout(this.keyboardLayout);
     const isCatFacing = this.keyboardOrientation === 'cat';
-    const is108 = this.keyboardLayout === '108';
+    const is108 = isWideLayout(this.keyboardLayout);
     const padX = 7;
     const padY = 6;
     const innerW = this.kbWidth - padX * 2;
@@ -3540,44 +3593,19 @@ export class KuroCatEngine {
     const topHalfW = (this.kbWidth * 0.955) / 2;
     const botHalfW = (this.kbWidth * 1.035) / 2;
     const halfH = this.kbHeight / 2;
-
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
-    ctx.shadowBlur = 11;
-    ctx.shadowOffsetY = 5;
-    ctx.fillStyle = '#191a1e';
-    this.trapezoidPath(ctx, topHalfW, botHalfW, -halfH + 3.5, halfH + 5.5, 6.5);
-    ctx.fill();
-    ctx.restore();
-
-    const pickerAccentTop =
-      this.catBreed === 'dafeiyu' ? '#5cc8ff' : this.catBreed === 'ragdoll' ? '#7ac7ff' : '#c8f538';
-    const pickerAccentSide =
-      this.catBreed === 'dafeiyu' ? '#2563eb' : this.catBreed === 'ragdoll' ? '#4690d8' : '#8cb014';
-
-    ctx.fillStyle = '#24262c';
-    ctx.strokeStyle = this.tailPickerActive ? pickerAccentTop : '#363840';
-    ctx.lineWidth = this.tailPickerActive ? 2.0 : 1.1;
-    this.trapezoidPath(ctx, topHalfW, botHalfW, -halfH, halfH, 6.5);
-    ctx.fill();
-    ctx.stroke();
-
-    // Bright clean light-grey inner keybed matching ORIG 0.3s bright airy white keyboard!
-    ctx.fillStyle = '#d4d6d1';
-    this.trapezoidPath(ctx, topHalfW - 5, botHalfW - 5, -halfH + 4, halfH - 4, 3.5);
-    ctx.fill();
-
     const rowH = innerH / layout.totalRows;
     const unitW = innerW / layout.totalUnits;
     const gap = is108 ? 0.85 : 0.9;
-    const selectedTailKeys = this.tailPickerSelection ?? this.tailKeyIdSet;
 
-    for (const key of layout.keys) {
-      const anim = this.keyAnims.get(key.id);
-      const press = anim ? anim.pressAmount : 0;
-      const isTailSelected = this.tailPickerActive && selectedTailKeys.has(key.id);
-      const isTailHovered = this.tailPickerActive && this.tailPickerHoverId === key.id;
-
+    const drawSingleKey = (
+      targetCtx: CanvasRenderingContext2D,
+      key: KeySpec,
+      press: number,
+      isTailSelected: boolean,
+      isTailHovered: boolean,
+      pickerAccentTop: string,
+      pickerAccentSide: string,
+    ) => {
       const rY = key.rowY ?? key.row;
       const rSpan = key.rowSpan ?? 1;
       const screenRowTop = isCatFacing ? layout.totalRows - (rY + rSpan) : rY;
@@ -3623,31 +3651,36 @@ export class KuroCatEngine {
         sideColor = '#c7c9c3';
       }
 
-      ctx.fillStyle = sideColor;
-      this.roundRect(ctx, x, y + 1.4, w, h, 1.8);
-      ctx.fill();
-
-      ctx.fillStyle = topColor;
-      this.roundRect(ctx, x, y, w, h - 0.9, 1.8);
-      ctx.fill();
-
-      if (isTailHovered) {
-        ctx.save();
-        ctx.strokeStyle = isTailSelected ? '#111214' : pickerAccentTop;
-        ctx.lineWidth = 1.65;
-        this.roundRect(ctx, x - 0.3, y - 0.3, w + 0.6, h - 0.3, 2.0);
-        ctx.stroke();
-        ctx.restore();
-      } else if (isTailSelected) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(17, 18, 20, 0.55)';
-        ctx.lineWidth = 0.85;
-        this.roundRect(ctx, x + 0.25, y + 0.25, w - 0.5, h - 1.4, 1.6);
-        ctx.stroke();
-        ctx.restore();
+      // When overdrawing an animated key onto the cached base, paint the inner keybed strip behind it
+      if (press > 0.01) {
+        targetCtx.fillStyle = '#d4d6d1';
+        targetCtx.fillRect(x - 0.4, -innerH / 2 + screenRowTop * rowH + gap * 0.5 - 0.4, w + 0.8, h + 3.8);
       }
 
-      // Keycap legends: rotated 180° in cat-facing mode, upright 0° in viewer-facing mode!
+      targetCtx.fillStyle = sideColor;
+      this.roundRect(targetCtx, x, y + 1.4, w, h, 1.8);
+      targetCtx.fill();
+
+      targetCtx.fillStyle = topColor;
+      this.roundRect(targetCtx, x, y, w, h - 0.9, 1.8);
+      targetCtx.fill();
+
+      if (isTailHovered) {
+        targetCtx.save();
+        targetCtx.strokeStyle = isTailSelected ? '#111214' : pickerAccentTop;
+        targetCtx.lineWidth = 1.65;
+        this.roundRect(targetCtx, x - 0.3, y - 0.3, w + 0.6, h - 0.3, 2.0);
+        targetCtx.stroke();
+        targetCtx.restore();
+      } else if (isTailSelected) {
+        targetCtx.save();
+        targetCtx.strokeStyle = 'rgba(17, 18, 20, 0.55)';
+        targetCtx.lineWidth = 0.85;
+        this.roundRect(targetCtx, x + 0.25, y + 0.25, w - 0.5, h - 1.4, 1.6);
+        targetCtx.stroke();
+        targetCtx.restore();
+      }
+
       const legend = key.id === 'space' ? (isTailSelected ? '␣' : '') : key.id === 'esc' ? 'Esc' : key.label;
       if (legend) {
         const isWideWord = legend.length >= 3;
@@ -3662,21 +3695,117 @@ export class KuroCatEngine {
             : legend.length === 2
               ? 6.4
               : 7.8;
-        ctx.save();
-        ctx.translate(x + w * 0.5, y + (h - 0.9) * 0.50);
+        targetCtx.save();
+        targetCtx.translate(x + w * 0.5, y + (h - 0.9) * 0.50);
         if (isCatFacing) {
-          ctx.rotate(Math.PI);
+          targetCtx.rotate(Math.PI);
         }
-        ctx.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
-        ctx.fillStyle = press > 0.14 || isTailSelected
+        targetCtx.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
+        targetCtx.fillStyle = press > 0.14 || isTailSelected
           ? '#111214'
           : key.accent === 'orange'
             ? '#ffffff'
             : '#2c2f36';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(legend, 0, 0);
-        ctx.restore();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.fillText(legend, 0, 0);
+        targetCtx.restore();
+      }
+    };
+
+    const pickerAccentTop =
+      this.catBreed === 'dafeiyu' ? '#5cc8ff' : this.catBreed === 'ragdoll' ? '#7ac7ff' : '#c8f538';
+    const pickerAccentSide =
+      this.catBreed === 'dafeiyu' ? '#2563eb' : this.catBreed === 'ragdoll' ? '#4690d8' : '#8cb014';
+
+    if (!this.tailPickerActive) {
+      // Cache the entire static keyboard (chassis + Gaussian shadowBlur + all 65/108 unpressed keycaps & legends)
+      // on an offscreen canvas so each active frame is just 1 drawImage() + 0-3 pressed keys!
+      const { uniformScale } = this.getViewportTransform();
+      const cacheScale = Math.min(2.5, Math.max(1.5, Math.ceil(uniformScale * 2) / 2));
+      const padMargin = 20;
+      const cacheLogW = Math.ceil(botHalfW * 2 + padMargin * 2);
+      const cacheLogH = Math.ceil(this.kbHeight + padMargin * 2);
+      const nextKey = `${this.keyboardLayout}|${this.keyboardOrientation}|${this.kbWidth}|${this.kbHeight}|${cacheScale}`;
+
+      if (!this.kbCacheCanvas || this.kbCacheKey !== nextKey) {
+        if (!this.kbCacheCanvas) this.kbCacheCanvas = document.createElement('canvas');
+        this.kbCacheCanvas.width = Math.round(cacheLogW * cacheScale);
+        this.kbCacheCanvas.height = Math.round(cacheLogH * cacheScale);
+        const cg = this.kbCacheCanvas.getContext('2d');
+        if (cg) {
+          cg.clearRect(0, 0, this.kbCacheCanvas.width, this.kbCacheCanvas.height);
+          cg.save();
+          cg.scale(cacheScale, cacheScale);
+          cg.translate(cacheLogW * 0.5, cacheLogH * 0.5);
+
+          cg.save();
+          cg.shadowColor = 'rgba(0, 0, 0, 0.34)';
+          cg.shadowBlur = 11;
+          cg.shadowOffsetY = 5;
+          cg.fillStyle = '#191a1e';
+          this.trapezoidPath(cg, topHalfW, botHalfW, -halfH + 3.5, halfH + 5.5, 6.5);
+          cg.fill();
+          cg.restore();
+
+          cg.fillStyle = '#24262c';
+          cg.strokeStyle = '#363840';
+          cg.lineWidth = 1.1;
+          this.trapezoidPath(cg, topHalfW, botHalfW, -halfH, halfH, 6.5);
+          cg.fill();
+          cg.stroke();
+
+          cg.fillStyle = '#d4d6d1';
+          this.trapezoidPath(cg, topHalfW - 5, botHalfW - 5, -halfH + 4, halfH - 4, 3.5);
+          cg.fill();
+
+          for (const key of layout.keys) {
+            drawSingleKey(cg, key, 0, false, false, pickerAccentTop, pickerAccentSide);
+          }
+          cg.restore();
+          this.kbCacheKey = nextKey;
+        }
+      }
+
+      if (this.kbCacheCanvas) {
+        ctx.drawImage(this.kbCacheCanvas, -cacheLogW * 0.5, -cacheLogH * 0.5, cacheLogW, cacheLogH);
+        for (const key of layout.keys) {
+          const anim = this.keyAnims.get(key.id);
+          const press = anim ? anim.pressAmount : 0;
+          if (press > 0.01) {
+            drawSingleKey(ctx, key, press, false, false, pickerAccentTop, pickerAccentSide);
+          }
+        }
+      }
+    } else {
+      // Interactive tail-picker mode: draw live highlights & hover outlines
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
+      ctx.shadowBlur = 11;
+      ctx.shadowOffsetY = 5;
+      ctx.fillStyle = '#191a1e';
+      this.trapezoidPath(ctx, topHalfW, botHalfW, -halfH + 3.5, halfH + 5.5, 6.5);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = '#24262c';
+      ctx.strokeStyle = pickerAccentTop;
+      ctx.lineWidth = 2.0;
+      this.trapezoidPath(ctx, topHalfW, botHalfW, -halfH, halfH, 6.5);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#d4d6d1';
+      this.trapezoidPath(ctx, topHalfW - 5, botHalfW - 5, -halfH + 4, halfH - 4, 3.5);
+      ctx.fill();
+
+      const selectedTailKeys = this.tailPickerSelection ?? this.tailKeyIdSet;
+      for (const key of layout.keys) {
+        const anim = this.keyAnims.get(key.id);
+        const press = anim ? anim.pressAmount : 0;
+        const isTailSelected = selectedTailKeys.has(key.id);
+        const isTailHovered = this.tailPickerHoverId === key.id;
+        drawSingleKey(ctx, key, press, isTailSelected, isTailHovered, pickerAccentTop, pickerAccentSide);
       }
     }
 

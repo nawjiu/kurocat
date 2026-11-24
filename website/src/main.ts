@@ -18,9 +18,9 @@ import {
 import { keyboardEventToVk } from './webKeyMap';
 import type { CollarColorId, KuroCatEngine3D } from '../../src/catEngine3d';
 
-const LOCAL_MIRROR_VERSION = 'v5.0.2';
-const LOCAL_MIRROR_VER_NUM = '5.0.2';
-const MACOS_MIRROR_VERSION = 'v5.0.2';
+const LOCAL_MIRROR_VERSION = 'v5.1.0';
+const LOCAL_MIRROR_VER_NUM = '5.1.0';
+const MACOS_MIRROR_VERSION = 'v5.1.0';
 
 let currentLocale: Locale = detectInitialLocale();
 let i18n = KUROCAT_I18N[currentLocale];

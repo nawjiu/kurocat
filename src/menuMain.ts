@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { DEFAULT_TAIL_KEY_IDS, type KeyboardOrientation, type TailKeyMode } from './catEngine';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
-import type { KeyboardLayoutId } from './keyboardLayout';
+import { normalizeLayoutId, type KeyboardLayoutId } from './keyboardLayout';
 
 interface AppSettings {
   x: number | null;
@@ -29,6 +29,7 @@ interface AppSettings {
   collarColor?: 'none' | 'red' | 'blue' | 'pink' | 'green';
   headphoneMode?: 'auto' | 'on' | 'off';
   mouseInvert?: boolean;
+  purrAlwaysOn?: boolean;
 }
 
 interface UpdateInfo {
@@ -43,6 +44,17 @@ interface UpdateInfo {
   installKind: string;
   notesSummary: string;
 }
+
+interface UpdateProgressEvent {
+  stage: 'checking' | 'available' | 'up_to_date' | 'downloading' | 'verifying' | 'installing' | 'error';
+  message: string;
+  info?: UpdateInfo | null;
+}
+
+type MenuTabId = 'appearance' | 'system';
+
+const isMacPlatform = (): boolean =>
+  /Mac/i.test(navigator.platform) || /Macintosh/i.test(navigator.userAgent);
 
 const TAIL_MODE_LABELS: Record<TailKeyMode, string> = {
   smart: '智能第三只手',
@@ -75,19 +87,56 @@ let settings: AppSettings = {
   collarColor: 'none',
   headphoneMode: 'off',
   mouseInvert: false,
+  purrAlwaysOn: false,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
 let sliderDragging = false;
-let currentAppVersion = '5.0.2';
+let currentAppVersion = '5.1.0';
+let cachedUpdateInfo: UpdateInfo | null = null;
+let updateBusy = false;
+let activeTab: MenuTabId = 'appearance';
 
 const menuEl = document.getElementById('context-menu') as HTMLDivElement;
+const tabBodyEl = document.getElementById('menu-tab-body') as HTMLDivElement | null;
 const breedPillsEl = document.getElementById('breed-pills') as HTMLDivElement;
 const scaleSliderEl = document.getElementById('scale-slider') as HTMLInputElement;
 const scaleValueEl = document.getElementById('scale-value') as HTMLButtonElement;
 const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanElement;
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const btnObsHideEl = document.getElementById('btn-obs-hide') as HTMLButtonElement;
+const btnCheckUpdateEl = document.getElementById('btn-check-update') as HTMLButtonElement | null;
+
+function switchTab(nextTab: MenuTabId): void {
+  activeTab = nextTab;
+  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((btn) => {
+    const isActive = btn.dataset.tab === activeTab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  document.querySelectorAll<HTMLElement>('[data-tab-panel]').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.dataset.tabPanel !== activeTab);
+  });
+  if (tabBodyEl) {
+    tabBodyEl.scrollTop = 0;
+  }
+}
+
+function renderFooterUpdateState(customLabel?: string, ready = false): void {
+  const hint = document.getElementById('update-hint');
+  const isReady = ready || Boolean(cachedUpdateInfo?.hasUpdate);
+  if (btnCheckUpdateEl) {
+    btnCheckUpdateEl.classList.toggle('update-ready', isReady);
+  }
+  if (!hint) return;
+  if (customLabel) {
+    hint.textContent = customLabel;
+  } else if (cachedUpdateInfo?.hasUpdate) {
+    hint.textContent = `⬆ 更新 v${cachedUpdateInfo.latestVersion}`;
+  } else {
+    hint.textContent = `检查更新 v${currentAppVersion}`;
+  }
+}
 
 function closeMenu(): void {
   void invoke('close_context_menu');
@@ -136,6 +185,7 @@ function syncUI(): void {
   setCheck('chk-autostart', settings.autostart);
   setCheck('chk-mcp', settings.mcpEnabled);
   setCheck('chk-mouse-invert', settings.mouseInvert === true);
+  setCheck('chk-purr-always', settings.purrAlwaysOn === true);
   setCheck('chk-obs', Boolean(settings.obsEnabled));
   setCheck('chk-obs-hide', Boolean(settings.obsEnabled && settings.obsHidePet));
 
@@ -151,7 +201,7 @@ function syncUI(): void {
     updateScaleSliderVisual(settings.scale);
   }
 
-  const kbLayout: KeyboardLayoutId = settings.keyboardLayout === '108' ? '108' : '65';
+  const kbLayout: KeyboardLayoutId = normalizeLayoutId(settings.keyboardLayout);
   const kbOrient: KeyboardOrientation = settings.keyboardOrientation === 'viewer' ? 'viewer' : 'cat';
   document.querySelectorAll<HTMLButtonElement>('[data-kblayout]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.kblayout === kbLayout);
@@ -304,40 +354,68 @@ async function createDesktopShortcut(): Promise<void> {
 }
 
 async function triggerManualUpdateCheck(): Promise<void> {
-  const hint = document.getElementById('update-hint');
-  if (hint) hint.textContent = '检查中…';
+  if (updateBusy) return;
+  // If we already know an update is available, clicking immediately installs (or opens release page).
+  if (cachedUpdateInfo?.hasUpdate) {
+    if (cachedUpdateInfo.downloadUrl) {
+      updateBusy = true;
+      renderFooterUpdateState(`下载 v${cachedUpdateInfo.latestVersion}...`, true);
+      closeMenu();
+      try {
+        await invoke('install_update', { info: cachedUpdateInfo });
+      } catch {
+        updateBusy = false;
+        renderFooterUpdateState();
+      }
+      return;
+    }
+    if (cachedUpdateInfo.releaseUrl) {
+      void invoke('open_release_page', { url: cachedUpdateInfo.releaseUrl });
+      closeMenu();
+      return;
+    }
+  }
+
+  updateBusy = true;
+  renderFooterUpdateState('检查更新中…', false);
   try {
     const info = await invoke<UpdateInfo>('check_for_update');
+    updateBusy = false;
     if (info.hasUpdate) {
-      if (hint) {
-        hint.textContent = `发现 v${info.latestVersion}`;
-        hint.classList.add('copied');
-      }
-      if (info.releaseUrl) {
-        void invoke('open_release_page', { url: info.releaseUrl });
-      }
-    } else if (hint) {
-      hint.textContent = `最新 v${info.currentVersion}`;
+      cachedUpdateInfo = info;
+      renderFooterUpdateState(`⬆ 点击更新 v${info.latestVersion}`, true);
+    } else {
+      cachedUpdateInfo = info;
+      renderFooterUpdateState(`✓ 最新 v${info.currentVersion}`, false);
       setTimeout(() => {
-        hint.textContent = `v${currentAppVersion}`;
+        renderFooterUpdateState();
       }, 2200);
     }
   } catch {
-    if (hint) {
-      hint.textContent = '检查失败';
-      setTimeout(() => {
-        hint.textContent = `v${currentAppVersion}`;
-      }, 2200);
-    }
+    updateBusy = false;
+    renderFooterUpdateState('检查失败，点此重试', false);
+    setTimeout(() => {
+      renderFooterUpdateState();
+    }, 2200);
   }
 }
 
 async function bootstrap(): Promise<void> {
+  if (isMacPlatform()) {
+    const shortcutBtn = document.getElementById('btn-desktop-shortcut');
+    if (shortcutBtn) shortcutBtn.classList.add('hidden');
+    const lockLbl = document.getElementById('lbl-toggle-lock');
+    if (lockLbl) lockLbl.textContent = '锁定鼠标穿透（Option 解锁）';
+    const lockBtn = document.getElementById('btn-toggle-lock');
+    if (lockBtn) lockBtn.title = '开启后重启保持锁定，按住 Option 或在菜单栏可随时解锁';
+  }
+
   try {
-    const [loadedSettings, loadedCats, ver] = await Promise.all([
+    const [loadedSettings, loadedCats, ver, cachedUpd] = await Promise.all([
       invoke<AppSettings>('get_settings'),
       invoke<CatSkinConfig[]>('get_cats'),
       invoke<string>('get_app_version'),
+      invoke<UpdateInfo | null>('get_cached_update_info').catch(() => null),
     ]);
     settings = loadedSettings;
     if (Array.isArray(loadedCats) && loadedCats.length > 0) {
@@ -345,13 +423,16 @@ async function bootstrap(): Promise<void> {
     }
     if (ver) {
       currentAppVersion = ver;
-      const hint = document.getElementById('update-hint');
-      if (hint) hint.textContent = `v${ver}`;
+    }
+    if (cachedUpd) {
+      cachedUpdateInfo = cachedUpd;
     }
   } catch (err) {
     console.error('Failed to load menu state:', err);
   }
   syncUI();
+  renderFooterUpdateState();
+  switchTab('appearance');
 
   const isWin7 = await invoke<boolean>('is_win7_ulw_mode').catch(() => false);
   if (isWin7) {
@@ -395,6 +476,15 @@ async function bootstrap(): Promise<void> {
   }
 
   menuEl.addEventListener('click', (e) => {
+    const tabBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tab]');
+    if (tabBtn) {
+      const t = tabBtn.dataset.tab;
+      if (t === 'appearance' || t === 'system') {
+        switchTab(t);
+      }
+      return;
+    }
+
     const target = (e.target as HTMLElement).closest<HTMLElement>(
       '[data-action], [data-breed], [data-rendermode], [data-collar], [data-headphonemode], [data-kblayout], [data-kborient], [data-tailmode]',
     );
@@ -425,7 +515,7 @@ async function bootstrap(): Promise<void> {
     }
 
     const kbLayoutAttr = target.dataset.kblayout;
-    if (kbLayoutAttr === '65' || kbLayoutAttr === '108') {
+    if (kbLayoutAttr === '65' || kbLayoutAttr === '98' || kbLayoutAttr === '108') {
       void applySettingsPatch({ keyboardLayout: kbLayoutAttr });
       return;
     }
@@ -475,6 +565,9 @@ async function bootstrap(): Promise<void> {
         break;
       case 'toggle-mouse-invert':
         void applySettingsPatch({ mouseInvert: settings.mouseInvert !== true });
+        break;
+      case 'toggle-purr-always':
+        void applySettingsPatch({ purrAlwaysOn: settings.purrAlwaysOn !== true });
         break;
       case 'toggle-obs': {
         const nextObs = !settings.obsEnabled;
@@ -530,18 +623,39 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  await listen<UpdateProgressEvent>('kuro-update-status', (ev) => {
+    if (ev.payload.info) {
+      cachedUpdateInfo = ev.payload.info;
+    }
+    if (ev.payload.stage === 'available' && cachedUpdateInfo?.hasUpdate) {
+      updateBusy = false;
+      renderFooterUpdateState();
+    } else if (ev.payload.stage === 'downloading' || ev.payload.stage === 'verifying' || ev.payload.stage === 'installing') {
+      updateBusy = true;
+      renderFooterUpdateState('更新中...', true);
+    } else if (ev.payload.stage === 'up_to_date' || ev.payload.stage === 'error') {
+      updateBusy = false;
+      renderFooterUpdateState();
+    }
+  });
+
   await listen('kuro-menu-opened', async () => {
     try {
-      const [latestSettings, latestCats] = await Promise.all([
+      const [latestSettings, latestCats, cachedUpd] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<CatSkinConfig[]>('get_cats'),
+        invoke<UpdateInfo | null>('get_cached_update_info').catch(() => null),
       ]);
       settings = latestSettings;
       if (Array.isArray(latestCats) && latestCats.length > 0) {
         catList = latestCats;
       }
+      if (cachedUpd) {
+        cachedUpdateInfo = cachedUpd;
+      }
       syncUI();
-      menuEl.scrollTop = 0;
+      renderFooterUpdateState();
+      if (tabBodyEl) tabBodyEl.scrollTop = 0;
     } catch {}
   });
 }

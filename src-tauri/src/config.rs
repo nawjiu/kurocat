@@ -74,6 +74,11 @@ pub fn default_mouse_invert() -> bool {
     false
 }
 
+/// Keep a soft idle purr running even when nobody pets the cat.
+pub fn default_purr_always_on() -> bool {
+    false
+}
+
 pub fn default_keyboard_layout() -> String {
     if cfg!(feature = "layout-108") {
         "108".to_string()
@@ -83,10 +88,10 @@ pub fn default_keyboard_layout() -> String {
 }
 
 pub fn normalize_keyboard_layout(raw: &str) -> String {
-    if raw.trim() == "108" {
-        "108".to_string()
-    } else {
-        "65".to_string()
+    match raw.trim() {
+        "108" => "108".to_string(),
+        "98" => "98".to_string(),
+        _ => "65".to_string(),
     }
 }
 
@@ -191,6 +196,8 @@ pub struct AppSettings {
     pub headphone_mode: String,
     #[serde(default = "default_mouse_invert")]
     pub mouse_invert: bool,
+    #[serde(default = "default_purr_always_on")]
+    pub purr_always_on: bool,
 }
 
 impl Default for AppSettings {
@@ -223,6 +230,7 @@ impl Default for AppSettings {
             collar_color: default_collar_color(),
             headphone_mode: default_headphone_mode(),
             mouse_invert: default_mouse_invert(),
+            purr_always_on: default_purr_always_on(),
         }
     }
 }

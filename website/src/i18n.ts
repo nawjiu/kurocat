@@ -187,14 +187,14 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
       'feat.mouseSpec2Lbl': '自动更新摘要校验',
       'feat.mouseSpec3Val': '一键升级',
       'feat.mouseSpec3Lbl': 'Win / Mac 静默重启',
-      'bento.1Title': '20%–150% 无级滑动缩放',
-      'bento.1Body': '自定义丝滑滑动条 60fps 实时预览、右下角锚定防漂移；就算缩到最小 20%，右键菜单与更新提醒依然完整不裁切。',
+      'bento.1Title': '双标签免滚动菜单 & 记忆穿透',
+      'bento.1Body': '右键浮窗拆分为「外观与互动 / 键盘·OBS·系统」双标签一屏看完，20%–150% 无级缩放不裁切；重启自动记住鼠标穿透锁定并带启动一键解锁防误锁。',
       'bento.2Title': '摸头眯眼 & 合成呼噜声',
       'bento.2Body': '鼠标移到猫头自动变身小手光标，来回抚摸触发慵懒眯眼与 Web Audio 24.5Hz 实时合成的温柔猫咪呼噜声。',
       'bento.3Title': '输密码自动闭眼防偷窥',
       'bento.3Body': '系统级自动识别 Windows / macOS 密码输入框：底层钩子拦截不外传按键，猫咪温柔闭眼、大肥鱼双手捂眼并遮蔽键帽与气泡。',
-      'bento.4Title': 'Rust 原生极低开销',
-      'bento.4Body': '无 Electron 臃肿内核，单文件约 24 MB 内存常驻，原生全局键鼠监听几乎零 CPU 占用。',
+      'bento.4Title': 'GPU 合批重构 & 游戏自动省电',
+      'bento.4Body': '3D 键帽图集合批与全 GPU 顶点变形，活跃态显卡占用直降 75%；检测到游戏自动切换 30 FPS 省电模式（最高降 88.5%），双显卡优先核显零负担。',
       'mcp.p1Text': '💬 “帮我用 KuroCat MCP 捏一只英短蓝猫并切过去”',
       'mcp.p2Text': '📸 “按这张我家猫的照片，给我定制一只专属桌宠！”',
       'mcp.p3Text': '⚙️ “把桌宠缩放到 85%，切到 108 键面向观众”',
@@ -209,7 +209,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat · 敲键盘的小黑猫<br /><span>住进你的桌面</span>',
       'hero.sub':
-        '基于 <strong>Tauri v2 + Rust 原生钩子 + Three.js 3D / Canvas 2D 双引擎</strong> 打造的透明置顶桌面键鼠伴侣。默认 <strong>✨ 3D 体积光影手办模式</strong>（右键一键切换 <strong>2D 经典手绘</strong>），安装包仅 <strong>2.15 MB</strong>；内置 <strong>6 款猫咪 + 🐳 大肥鱼（鲸鱼娘）</strong>、<strong>游戏自动戴电竞耳机</strong>、<strong>3D 项圈铃铛</strong>、<strong>自定义尾巴拍键</strong>、<strong>OBS 免抠像直播源</strong>、<strong>输密码自动闭眼防偷窥</strong> 与 <strong>MCP 协议 AI 捏猫</strong>（3D/2D 同步斑点）。',
+        '基于 <strong>Tauri v2 + Rust 原生钩子 + Three.js 3D / Canvas 2D 双引擎</strong> 打造的透明置顶桌面键鼠伴侣。默认 <strong>✨ 3D 体积光影手办模式</strong>（右键双标签页免滚动菜单一键切换 <strong>2D 经典手绘</strong>），安装包仅 <strong>2.16 MB</strong>；v5.1.0 重构 GPU 渲染合批与<strong>游戏自动 30 FPS 省电模式</strong>（活跃 GPU 最高降 88%），内置 <strong>6 款猫咪 + 🐳 大肥鱼</strong>、<strong>游戏自动戴电竞耳机</strong>、<strong>3D 项圈铃铛</strong>、<strong>重启记住鼠标穿透</strong>、<strong>OBS 免抠像直播源</strong>、<strong>密码闭眼防偷窥</strong>、<strong>国内直连秒速更新</strong> 与 <strong>MCP 协议 AI 捏猫</strong>。',
       'dl.sub':
         '所有安装包均内置 <strong>20%–150% 无级缩放</strong>、<strong>65% / 108 键随时切换</strong>、<strong>自定义尾巴拍键</strong> 与 <strong>App 内自动更新</strong>。<br />默认提供 <code>qianyi.one</code> 国内高速直链，同时保留 GitHub Releases 官方原链与 SHA-256 校验。',
       'dl.winDesc':
@@ -236,7 +236,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
         '无论你习惯极简 65% 小键盘，还是财务/工程必备的 108 键完整小键盘，右键一秒切换并自动锚定右下角平滑调整窗口宽度。支持<strong>「面向猫咪（180° 真实视角）」</strong>与<strong>「面向观众（正向字母易读视角）」</strong>双透视重投影，鼠标左右键也同步自动翻转。',
       'feat.mouseHeadline': '左右键独立分色按压<br />还有无感自升级',
       'feat.mouseBody':
-        '鼠标左键（<code>L</code>）、右键（<code>R</code>）与中键滚轮彻底独立分区：左键亮起猫咪主强调色，右键呈现高对比珊瑚橙或天蓝色，带 3D 按下内阴影与 <code>LMB</code>/<code>RMB</code> 迷你气泡，支持双键同时按住！启动后自动静默检查 GitHub Releases，发现新版时在猫头上方浮现轻量提醒条，点一下即可完成 SHA-256 校验与一键自升级。',
+        '鼠标左键（<code>L</code>）、右键（<code>R</code>）与中键滚轮彻底独立分区：左键亮起猫咪主强调色，右键呈现高对比珊瑚橙或天蓝色，带 3D 按下内阴影与 <code>LMB</code>/<code>RMB</code> 迷你气泡，支持双键同时按住！内置<strong>国内高速直连优先</strong>的自动更新检测（失败自动回退 GitHub），发现新版本时在猫头上方弹出小巧可关闭的更新胶囊（点 <code>×</code> 永久忽略当前版，下次发版自动再弹），一键完成 SHA-256 校验与静默升级。',
       'mcp.headline': '发张自家猫的照片<br />让 AI 0.4 秒捏进你的桌面',
       'mcp.body':
         'KuroCat 原生内置 <strong>Stdio</strong> 与 <strong>本机 Streamable HTTP（<code>127.0.0.1:27420</code>）</strong> 双模式 MCP 服务端，无需安装 Node.js 或 Python。右键猫咪点「复制 MCP 配置」粘贴进 <strong>Claude Desktop / Cursor / Antigravity / Windsurf</strong>，即可用自然语言捏出任何毛色、虎斑、三花、胎记斑块与主题高亮，实时热更新无需重启。',
@@ -453,14 +453,14 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
       'feat.mouseSpec2Lbl': 'SHA-256 Verified Updates',
       'feat.mouseSpec3Val': '1-Click Update',
       'feat.mouseSpec3Lbl': 'Silent Win & Mac Upgrade',
-      'bento.1Title': '20%–150% Smooth Scaling',
-      'bento.1Body': '60fps continuous slider anchored to the bottom-right corner. Even at 20% mini size, menus and alerts stay crisp and unclipped.',
+      'bento.1Title': '2-Tab Zero-Scroll Menu & Persistent Lock',
+      'bento.1Body': 'Split into Appearance and Keyboard/OBS/System tabs so everything fits on one screen—plus 20%–150% scaling and persistent click-through lock with a one-click startup Unlock pill.',
       'bento.2Title': 'Head Petting & Synthesized Purr',
       'bento.2Body': 'Hover over the cat’s head and pet back-and-forth to trigger happy squinting eyes and gentle 24.5Hz Web Audio purring.',
       'bento.3Title': 'Auto Password Privacy Guard',
       'bento.3Body': 'Detects Windows & macOS password fields at the OS level—intercepting keystrokes in Rust while cats close their eyes and BigFish covers hers.',
-      'bento.4Title': 'Native Rust, Featherlight',
-      'bento.4Body': 'No bloated Electron bundle. ~24 MB RAM footprint and near-zero idle CPU with native global input hooks.',
+      'bento.4Title': 'Instanced GPU & Game Auto-Eco Mode',
+      'bento.4Body': 'Instanced 3D keycap batching and GPU vertex deformation cut active GPU usage by 75%; auto 30 FPS Game Eco Mode cuts it by up to 88.5% while favoring iGPU on laptops.',
       'mcp.p1Text': '💬 "Create a British Shorthair blue cat via KuroCat MCP and switch to it"',
       'mcp.p2Text': '📸 "Look at this photo of my cat and design a matching KuroCat skin!"',
       'mcp.p3Text': '⚙️ "Scale KuroCat to 85% and switch to 108-key viewer perspective"',
@@ -475,7 +475,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat — A Typing Black Cat<br /><span>Living on Your Desktop</span>',
       'hero.sub':
-        'Built with <strong>Tauri v2 + native Rust hooks + Three.js 3D / Canvas 2D dual engine</strong> as a transparent, always-on-top desk companion. Defaults to <strong>✨ 3D Volumetric Figurine</strong> (one-click switch to <strong>2D Classic</strong>), only <strong>2.15 MB</strong> installer; includes <strong>6 cats + 🐳 BigFish</strong>, <strong>optional gaming headset (auto-equips in PC games)</strong>, <strong>3D collar bells</strong>, <strong>customizable tail-key patting</strong>, <strong>native OBS transparent source</strong>, <strong>password privacy guard</strong>, and <strong>MCP AI cat studio</strong> (1:1 spots in 3D &amp; 2D).',
+        'Built with <strong>Tauri v2 + native Rust hooks + Three.js 3D / Canvas 2D dual engine</strong> as a transparent, always-on-top desk companion. Defaults to <strong>✨ 3D Volumetric Figurine</strong> (two-tab zero-scroll menu to switch <strong>2D Classic</strong>), only <strong>2.16 MB</strong> installer; v5.1.0 introduces instanced GPU batching &amp; <strong>auto 30 FPS Game Eco Mode</strong> (up to 88% lower active GPU), <strong>6 cats + 🐳 BigFish</strong>, <strong>auto-equip gaming headset</strong>, <strong>3D collar bells</strong>, <strong>persistent click-through lock</strong>, <strong>OBS transparent source</strong>, <strong>password privacy guard</strong>, <strong>fast CDN auto-updates</strong>, and <strong>MCP AI cat studio</strong>.',
       'dl.sub':
         'Every build includes <strong>20%–150% smooth scaling</strong>, <strong>65% / 108-key switching</strong>, <strong>customizable tail keys</strong>, and <strong>in-app auto-updates</strong>.<br />Fast CDN mirrors on <code>qianyi.one</code> alongside official GitHub Releases with SHA-256 verification.',
       'dl.winDesc':
@@ -502,7 +502,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
         'Switch in one click between minimal 65% and full 108-key ANSI (complete F-row &amp; numpad) with smooth bottom-right anchored resizing. Flip between <strong>Cat-Facing (180°)</strong> and <strong>Viewer-Facing (upright legends)</strong> with synchronized mouse button orientation.',
       'feat.mouseHeadline': 'Independent L / R Click Colors<br />&amp; Seamless In-App Auto-Updater',
       'feat.mouseBody':
-        'Left (<code>L</code>), Right (<code>R</code>), and scroll/middle clicks glow independently with contrasting accent colors, 3D pressed shadows, and mini <code>LMB</code>/<code>RMB</code> badges—supporting dual-button holds. Silent GitHub Releases checks offer SHA-256 verified one-click upgrades.',
+        'Left (<code>L</code>), Right (<code>R</code>), and scroll/middle clicks glow independently with contrasting accent colors, 3D pressed shadows, and mini <code>LMB</code>/<code>RMB</code> badges—supporting dual-button holds. Fast CDN-first update checks (with GitHub fallback) pop a compact dismissible update pill above the pet for SHA-256 verified one-click upgrades.',
       'mcp.headline': 'Share a Photo of Your Cat<br />AI Sculpts It in 0.4 Seconds',
       'mcp.body':
         'KuroCat ships with both <strong>Stdio</strong> and <strong>Local Streamable HTTP (<code>127.0.0.1:27420</code>)</strong> MCP servers inside the single binary—no Node.js or Python needed. Click "Copy MCP Config" and paste into <strong>Claude Desktop / Cursor / Antigravity / Windsurf</strong> to design any coat, tabby stripes, calico patches, or eye colors with instant hot-reload.',
@@ -719,14 +719,14 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
       'feat.mouseSpec2Lbl': 'SHA-256 自動検証更新',
       'feat.mouseSpec3Val': '1 クリック更新',
       'feat.mouseSpec3Lbl': 'Win / Mac 自動再起動アップデート',
-      'bento.1Title': '20%–150% 無段階ズーム',
-      'bento.1Body': '60fps スライダーで右下基準のまま自在にリサイズ。最小 20% でもメニューや通知は見切れず鮮明です。',
+      'bento.1Title': '2 タブ式スクロール不要メニュー & 透過ロック記憶',
+      'bento.1Body': '「外観と操作 / キーボード・OBS・システム」の 2 タブで 1 画面完結。20%–150% ズーム対応＆再起動後もクリック透過を維持し、起動時ワンクリック解除バー付き。',
       'bento.2Title': 'なでなで細目 & 合成ゴロゴロ音',
       'bento.2Body': '猫の頭を往復でなでると気持ちよさそうに目を細め、Web Audio 24.5Hz 合成のやさしいゴロゴロ音が鳴ります。',
       'bento.3Title': 'パスワード自動目隠し保護',
       'bento.3Body': 'Windows / macOS のパスワード欄を自動検知し Rust 層で打鍵を遮断。猫は目を閉じ、クジラ娘は両手で目を覆います。',
-      'bento.4Title': 'Rust ネイティブ超軽量設計',
-      'bento.4Body': 'Electron 不使用でメモリ常駐約 24 MB。ネイティブフックにより待機時 CPU 負荷はほぼゼロです。',
+      'bento.4Title': 'GPU インスタンス描画 & ゲーム自動省電力',
+      'bento.4Body': '3D キーキャップのインスタンス統合と GPU 頂点変形でアクティブ時 GPU 負荷 75% 削減。ゲーム起動中は自動で 30 FPS 省電力（最大 88.5% 削減）へ切替。',
       'mcp.p1Text': '💬 「KuroCat MCP でブリティッシュショートヘアを作って切り替えて」',
       'mcp.p2Text': '📸 「うちの猫の写真に合わせて専用ペットを作って！」',
       'mcp.p3Text': '⚙️ 「85% に縮小して 108 キー・視聴者目線に切り替えて」',
@@ -741,7 +741,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat · キーボードを叩く黒猫が<br /><span>あなたのデスクトップに</span>',
       'hero.sub':
-        '<strong>Tauri v2 + Rust ネイティブフック + Three.js 3D / Canvas 2D デュアルエンジン</strong> で開発した透過・最前面デスクトップペット。初期設定の <strong>✨ 3D フィギュアモード</strong> と <strong>2D クラシック手描き</strong> をワンクリック切替、インストーラーはわずか <strong>2.15 MB</strong>。<strong>猫 6 種 + 🐳 クジラ娘</strong>、<strong>ゲーム自動検出ヘッドセット</strong>、<strong>3D 首輪ベル</strong>、<strong>しっぽタイピング</strong>、<strong>OBS 透過ソース</strong>、<strong>パスワード自動保護</strong>、<strong>MCP AI カスタム猫作成</strong>（3D/2D 模様同期）を標準搭載。',
+        '<strong>Tauri v2 + Rust ネイティブフック + Three.js 3D / Canvas 2D デュアルエンジン</strong> で開発した透過・最前面デスクトップペット。初期設定の <strong>✨ 3D フィギュアモード</strong> と <strong>2D クラシック手描き</strong> を 2 タブ式メニューで切替でき、インストーラーはわずか <strong>2.16 MB</strong>。v5.1.0 では GPU インスタンス描画と <strong>ゲーム自動 30 FPS 省電力</strong>（最大 88% 削減）、<strong>猫 6 種 + 🐳 クジラ娘</strong>、<strong>ゲーム自動ヘッドセット</strong>、<strong>3D 首輪ベル</strong>、<strong>透過ロック記憶</strong>、<strong>OBS 透過ソース</strong>、<strong>パスワード自動保護</strong>、<strong>高速 CDN 自動更新</strong>、<strong>MCP AI カスタム猫</strong> を標準搭載。',
       'dl.sub':
         '全パッケージに <strong>20%–150% 無段階ズーム</strong>・<strong>65% / 108 キー切替</strong>・<strong>しっぽキー選択</strong>・<strong>アプリ内自動更新</strong> を内蔵。<br /><code>qianyi.one</code> 高速ミラーと GitHub Releases 公式リンク（SHA-256 検証対応）を用意しています。',
       'dl.winDesc':
@@ -768,7 +768,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
         '省スペースな 65% もテンキー完備の 108 キーも右クリック 1 秒で切替でき、右下基準でウィンドウ幅を自動調整。<strong>猫目線（180°）</strong> と <strong>視聴者目線（正立印字）</strong> に合わせてマウス左右ボタンも自動反転します。',
       'feat.mouseHeadline': '左右クリックを別カラーで発光<br />アプリ内ワンクリック自動更新',
       'feat.mouseBody':
-        '左（<code>L</code>）・右（<code>R</code>）・中/ホイールをコントラスト配色と 3D 影、ミニ <code>LMB</code>/<code>RMB</code> バッジで明確に識別（同時押し対応）。GitHub Releases を自動チェックし SHA-256 検証付きでシームレスに更新できます。',
+        '左（<code>L</code>）・右（<code>R</code>）・中/ホイールをコントラスト配色と 3D 影、ミニ <code>LMB</code>/<code>RMB</code> バッジで明確に識別（同時押し対応）。高速 CDN 優先（GitHub フォールバック）の自動更新チェックにより、新バージョン配信時はペット頭上に閉じられる小型更新ピルを表示し、SHA-256 検証付きでシームレスに更新できます。',
       'mcp.headline': '愛猫の写真から<br />AI が 0.4 秒でデスクトップへ再現',
       'mcp.body':
         'Node.js も Python も不要。単体アプリに <strong>Stdio</strong> と <strong>ローカル Streamable HTTP（<code>127.0.0.1:27420</code>）</strong> MCP サーバーを内蔵しています。右クリック「MCP 設定をコピー」を <strong>Claude Desktop / Cursor / Antigravity / Windsurf</strong> に貼るだけで、毛色や柄・瞳の色を自然言語で自由作成できます。',

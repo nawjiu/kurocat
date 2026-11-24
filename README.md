@@ -1,9 +1,5 @@
 # 🐈‍⬛ KuroCat — Open-Source Desktop Typing Cat Pet · 桌面打字小黑猫伴侣
 
-> **🍴 个人 fork —— 基于官方 `v5.0.2`，只额外加了一个功能：鼠标反转（猫视角）**
-> 右键菜单 / 托盘菜单里可开关：开启后猫猫按「坐在桌子对面回头看你」的视角理解鼠标，左右与上下同时镜像。默认关闭，代码其余部分与官方 `v5.0.2` 一致。
-> 带此功能的 Windows 安装包：[**本仓库 Releases**](https://github.com/nawjiu/kurocat/releases/latest)。文中其余下载链接与截图均来自上游官方项目。
-
 <p align="center">
   <strong>🇨🇳 简体中文</strong> &nbsp;|&nbsp;
   <a href="./README.en.md">🇺🇸 English</a> &nbsp;|&nbsp;
@@ -52,13 +48,9 @@
 
 ## 📥 直接下载使用（Windows / Win7 / macOS / Linux）
 
-> **🍴 本仓库是个人 fork（基于官方 `v5.0.2`），只多了一个「鼠标反转（猫视角）」开关。**
-> 👉 **带此功能的 Windows 安装包**：[**`nawjiu/kurocat` Releases**](https://github.com/nawjiu/kurocat/releases/latest) —— 下方链接均为原作者官方包（不含此功能）。
-> ⚠️ App 内「检查更新」仍指向官方仓库：点更新会装回官方版，反转选项随之消失，需要再从 fork Releases 覆盖安装一次。
+前往 [Releases](https://github.com/qianyiai/kurocat/releases) 页面或直接点击下方最新 **`v5.1.0`** 安装包下载（全新搭载 **✨ 3D 体积光影手办模式 & 🎨 2D 经典手绘双引擎一键切换（默认 3D）**、**2D/3D 短萌手臂与毛色过渡优化**、**可选 3D 项圈铃铛与电竞耳机（支持游戏自动检测静默戴上/摘下，默认均关闭）**、**MCP AI 捏猫斑点 3D/2D 1:1 同步**、**28s 防 1px 微抖动打瞌睡**、**屏幕最顶端无阻自由拖动**、**尾巴拍键 4 模式 + 键盘点选录制**、**独立侧边不挡猫右键菜单**、**内置 OBS 透明直播源（`127.0.0.1:27421/obs` 免抠像）**、**20%–150% 丝滑缩放**、**65% / 108 键** 与 **输密码自动闭眼防偷窥** 及 App 内一键自升级）：
 
-前往 [Releases](https://github.com/qianyiai/kurocat/releases) 页面或直接点击下方最新 **`v5.0.2`** 安装包下载（全新搭载 **✨ 3D 体积光影手办模式 & 🎨 2D 经典手绘双引擎一键切换（默认 3D）**、**2D/3D 短萌手臂与毛色过渡优化**、**可选 3D 项圈铃铛与电竞耳机（支持游戏自动检测静默戴上/摘下，默认均关闭）**、**MCP AI 捏猫斑点 3D/2D 1:1 同步**、**28s 防 1px 微抖动打瞌睡**、**屏幕最顶端无阻自由拖动**、**尾巴拍键 4 模式 + 键盘点选录制**、**独立侧边不挡猫右键菜单**、**内置 OBS 透明直播源（`127.0.0.1:27421/obs` 免抠像）**、**20%–150% 丝滑缩放**、**65% / 108 键** 与 **输密码自动闭眼防偷窥** 及 App 内一键自升级）：
-
-- **🪟 Windows 10 / 11（65% 经典安装版 · `v5.0.2`）**：[**`KuroCat-5.0.2-x64-setup.exe`**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-5.0.2-x64-setup.exe)（2.15 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/#download)
+- **🪟 Windows 10 / 11（65% 经典安装版 · `v5.1.0`）**：[**`KuroCat-5.1.0-x64-setup.exe`**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-5.1.0-x64-setup.exe)（2.15 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/#download)
   - 默认 65% 紧凑机械键盘，自动创建桌面 **`KuroCat`** 图标、开始菜单与系统卸载入口；右键或托盘随时一键切换 **108 键全尺寸小键盘**、**🐳 大肥鱼（鲸鱼娘）**、**OBS 透明直播源** 与 App 内一键更新。
   - **常见问题说明**：
     - **Edge / Chrome 浏览器提示「通常不会下载 `.exe`」怎么办？**（开源免费软件未购商业代码签名证书，全量源码公开可放心信任）：
@@ -67,16 +59,16 @@
       - **双击安装若弹出蓝框「Windows 已保护你的电脑」**：点 **「更多信息」** → 点 **「仍要运行」** 即可。
     - 极少数老版 Win10 / LTSC 精简版若提示缺少 `WebView2 Runtime`，安装微软官方 1.8 MB 引导程序（右键「以管理员身份运行」）即可：[`MicrosoftEdgeWebview2Setup.exe`](https://go.microsoft.com/fwlink/p/?LinkId=2124703)。
     - **游戏全屏 / 管理员权限 / OBS 直播提示**：单机与常规游戏在 Win10/11 全屏优化（FSO）或「无边框窗口化」下内置持续 Z 序置顶守卫且绝不抢焦点（建议开启「锁定鼠标穿透」，按 `Alt` 随时解锁）；若游戏本身以管理员权限运行导致无法捕获键鼠，右键系统托盘点击 **「以管理员身份重启（捕获游戏键鼠）」** 即可无缝提权；直播录屏可直接右键小猫或托盘点 **「复制 OBS 透明源地址」**（自动开启本机 `http://127.0.0.1:27421/obs`，OBS 添加浏览器源即享原生 Alpha 透明通道免抠像，支持「仅 OBS 显示」隐藏桌面猫且同步防密码泄露）；玩无畏契约 / 三角洲行动等强内核反作弊网游建议右键托盘开启 **「暂停监听并隐藏（游戏反作弊护航）」**。
-- **🖥️ Windows 7 SP1（64 位专属兼容绿包版 · `v5.0.2`）**：[**`KuroCat-v5.0.2-win7-x64-portable.zip`**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-win7-x64-portable.zip)（178.94 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/releases/v5.0.2/KuroCat-v5.0.2-win7-x64-portable.zip)
+- **🖥️ Windows 7 SP1（64 位专属兼容绿包版 · `v5.1.0`）**：[**`KuroCat-v5.1.0-win7-x64-portable.zip`**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-win7-x64-portable.zip)（178.94 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/releases/v5.1.0/KuroCat-v5.1.0-win7-x64-portable.zip)
   - 原生 PE 6.01 编译（零 Win8/Win10 DLL 依赖），内置微软官方最后一版支持 Win7 的离线 **WebView2 109.0.1518.78** 运行库，并搭载 **Win7 原生 256 级逐像素透明抗锯齿渲染（`UpdateLayeredWindow`）**，开不开 Aero 均无白底框与锯齿；解压后保持 `KuroCat.exe` 与 `WebView2Runtime` 同目录直接双击即可运行。
-- **🍎 macOS 10.15 Catalina+（Apple Silicon M1–M4 & Intel 通用版 · `v5.0.2`）**：[**`KuroCat-v5.0.2-macos-universal.dmg`**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-macos-universal.dmg)（5.93 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/releases/v5.0.2/KuroCat-v5.0.2-macos-universal.dmg)
+- **🍎 macOS 10.15 Catalina+（Apple Silicon M1–M4 & Intel 通用版 · `v5.1.0`）**：[**`KuroCat-v5.1.0-macos-universal.dmg`**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-macos-universal.dmg)（5.93 MB）｜[**官网国内高速下载**](https://qianyi.one/kurocat/releases/v5.1.0/KuroCat-v5.1.0-macos-universal.dmg)
   - 打开 `.dmg` 将 `KuroCat.app` 拖入「应用程序」文件夹运行，内置 3D/2D 切换、65% / 108 键切换与全部 7 款皮肤（含 🐳 大肥鱼鲸鱼娘）。
   - **首次打开说明（开源未公证应用）**：若提示「无法验证开发者」或「已损坏」，在终端执行一次 `xattr -cr /Applications/KuroCat.app` 后即可正常打开（后续 App 内一键升级会自动处理，无需再敲命令）。
   - **键盘与鼠标监听权限**：首次启动会自动弹出系统授权引导，请在「系统设置 → 隐私与安全性」中同时勾选 **「辅助功能」与「输入监控」** 里的 `KuroCat`（即开即生效，兼容 Karabiner-Elements；若覆盖升级后权限未生效，在列表中选中 `KuroCat` 点左下角 `-` 删除再重新 `+` 添加即可）。
   - **macOS Stdio MCP 路径**：`/Applications/KuroCat.app/Contents/MacOS/KuroCat`（参数 `--mcp`），或在桌宠运行时直接连接 `http://127.0.0.1:27420/mcp`。
-- **🐧 Linux / Ubuntu 22.04+ / Debian 12+ / 银河麒麟 V11+ / UOS（`v5.0.2`）**：
-  - **x86_64（Intel / AMD / 兆芯 / 海光）**：[**`.deb`（2.38 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-linux-amd64.deb) · [**`.AppImage`（77.52 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-linux-amd64.AppImage)
-  - **ARM64（飞腾 / 鲲鹏 / 树莓派）**：[**`.deb`（2.34 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-linux-arm64.deb) · [**`.AppImage`（75.69 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.0.2/KuroCat-v5.0.2-linux-arm64.AppImage)
+- **🐧 Linux / Ubuntu 22.04+ / Debian 12+ / 银河麒麟 V11+ / UOS（`v5.1.0`）**：
+  - **x86_64（Intel / AMD / 兆芯 / 海光）**：[**`.deb`（2.38 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-linux-amd64.deb) · [**`.AppImage`（77.52 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-linux-amd64.AppImage)
+  - **ARM64（飞腾 / 鲲鹏 / 树莓派）**：[**`.deb`（2.34 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-linux-arm64.deb) · [**`.AppImage`（75.69 MB）**](https://github.com/qianyiai/kurocat/releases/download/v5.1.0/KuroCat-v5.1.0-linux-arm64.AppImage)
   - **系统要求说明**：基于 Tauri v2 + Ubuntu 22.04 基线构建，需要 **`glibc >= 2.34`** 且（`.deb` 版）依赖 **`libwebkit2gtk-4.1-0`** 与 **`libayatana-appindicator3-1`**（适用于 Ubuntu 22.04+ / Debian 12+ / 银河麒麟 V11+ 等发行版；**暂不支持基于 Ubuntu 20.04 / `glibc 2.31` / `webkit2gtk-4.0` 的银河麒麟 V10 SP1**）。
   - 原生动态加载 X11 `XRecord`（免 root 捕获全局键鼠，Wayland 自动支持 `evdev` 回退），官网亦提供全部国内高速镜像：[`https://qianyi.one/kurocat/#linux-download`](https://qianyi.one/kurocat/#linux-download)。
 

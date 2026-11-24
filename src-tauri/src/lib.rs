@@ -43,7 +43,8 @@ pub const WIN7_MIN_WINDOW_WIDTH: f64 = 260.0;
 pub const WIN7_MIN_WINDOW_HEIGHT: f64 = 410.0;
 
 pub fn base_dimensions(layout: &str) -> (f64, f64) {
-    if layout == "108" {
+    // 98-key (980) boards keep the numpad, so they share the wide 108% staging canvas.
+    if layout == "108" || layout == "98" {
         (BASE_WIDTH_108, BASE_HEIGHT_108)
     } else {
         (BASE_WIDTH, BASE_HEIGHT)
@@ -494,7 +495,7 @@ fn current_pet_rect_and_monitor(app: &AppHandle) -> Option<((i32, i32, i32, i32)
 fn side_menu_geometry(app: &AppHandle) -> Option<(i32, i32, f64, f64)> {
     let (pet_rect, work_area, sf) = current_pet_rect_and_monitor(app)?;
     let mon_logical_h = work_area.3 as f64 / sf.max(0.5);
-    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 650.0);
+    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 648.0);
     let mw = (SIDE_MENU_LOGICAL_W * sf).round() as i32;
     let mh = (menu_logical_h * sf).round() as i32;
     let gap = (10.0 * sf).round() as i32;
@@ -843,6 +844,11 @@ fn set_update_banner_open(state: State<'_, AppState>, open: bool) {
 #[tauri::command]
 fn get_app_version() -> String {
     updater::CURRENT_VERSION.to_string()
+}
+
+#[tauri::command]
+fn get_cached_update_info() -> Option<updater::UpdateInfo> {
+    updater::get_cached_update_info()
 }
 
 #[tauri::command]
@@ -1557,15 +1563,15 @@ fn win_wait_for_previous_pid_if_requested() {
     }
 }
 
-fn is_over_interactive_silhouette(rx: f64, ry: f64, is_108: bool) -> (bool, bool) {
-    // Cat body/head oval centered around (0.48, 0.49) for 65% or (0.51, 0.48) for 108-key
-    let (cat_cx, cat_rx) = if is_108 { (0.51, 0.21) } else { (0.48, 0.25) };
+fn is_over_interactive_silhouette(rx: f64, ry: f64, is_wide: bool) -> (bool, bool) {
+    // Cat body/head oval centered around (0.48, 0.49) for 65% or (0.51, 0.48) for 98/108-key
+    let (cat_cx, cat_rx) = if is_wide { (0.51, 0.21) } else { (0.48, 0.25) };
     let dx_cat = (rx - cat_cx) / cat_rx;
     let dy_cat = (ry - 0.49) / 0.27;
     let over_cat = (dx_cat * dx_cat + dy_cat * dy_cat) <= 1.0;
 
     // Keyboard & mouse lower area
-    let over_desk = if is_108 {
+    let over_desk = if is_wide {
         rx >= 0.04 && rx <= 0.94 && ry >= 0.65 && ry <= 0.94
     } else {
         rx >= 0.06 && rx <= 0.92 && ry >= 0.65 && ry <= 0.91
@@ -1629,6 +1635,12 @@ mod tail_picker_hit_tests {
     }
 }
 
+/// Ensures the top update/unlock toast pill (up to ~54px tall including top margin)
+/// remains clickable even when the pet window is scaled down to 20%-36%.
+pub(crate) fn banner_hit_ry_limit(win_log_h: f64) -> f64 {
+    (54.0 / win_log_h.max(1.0)).clamp(0.19, 0.55)
+}
+
 fn start_hit_test_loop(
     app: AppHandle,
     settings: Arc<Mutex<AppSettings>>,
@@ -1641,26 +1653,38 @@ fn start_hit_test_loop(
     std::thread::spawn(move || {
         let mut last_ignore: Option<bool> = None;
         let mut last_cursor: (i32, i32) = (i32::MIN, i32::MIN);
+        let mut last_over_cat = false;
+        let mut last_inside_pet = false;
         let mut last_alt_override = false;
         let mut last_effective_locked = false;
+        let mut last_cursor_emit = Instant::now() - Duration::from_secs(1);
+        let mut sleep_ms: u64 = 25;
         #[cfg(windows)]
         let mut drift_ticks: u8 = 0;
         #[cfg(windows)]
+        let mut last_drift_check = Instant::now() - Duration::from_secs(1);
+        #[cfg(windows)]
         let mut last_fg_hwnd: isize = 0;
         #[cfg(windows)]
-        let mut topmost_check_ticks: u8 = 0;
+        let mut last_topmost_check = Instant::now() - Duration::from_secs(1);
+        #[cfg(windows)]
+        let mut last_enum_check = Instant::now() - Duration::from_secs(2);
+        #[cfg(windows)]
+        let mut fg_just_changed = false;
         #[cfg(windows)]
         let mut fg_above_attempts: u8 = 0;
         #[cfg(windows)]
         let mut last_topmost_reassert = Instant::now() - Duration::from_secs(5);
 
         loop {
-            std::thread::sleep(Duration::from_millis(25));
+            std::thread::sleep(Duration::from_millis(sleep_ms));
 
             if paused_guard.load(Ordering::Relaxed) {
+                sleep_ms = 120;
                 continue;
             }
             let Some(win) = app.get_webview_window("main") else {
+                sleep_ms = 120;
                 continue;
             };
             #[cfg(windows)]
@@ -1671,9 +1695,11 @@ fn start_hit_test_loop(
             if is_win7_ulw {
                 #[cfg(windows)]
                 if !win7_layered::is_visible() {
+                    sleep_ms = 120;
                     continue;
                 }
             } else if !win.is_visible().unwrap_or(false) {
+                sleep_ms = 120;
                 continue;
             }
             let sf = win.scale_factor().unwrap_or(1.0);
@@ -1703,16 +1729,16 @@ fn start_hit_test_loop(
             let rx = (cx - win_x) as f64 / w;
             let ry = (cy - win_y) as f64 / h;
             let inside = rx >= 0.0 && rx <= 1.0 && ry >= 0.0 && ry <= 1.0;
-            let (locked, always_on_top, is_108, cur_scale, layout_str) = {
+            let (locked, always_on_top, cur_layout, cur_scale) = {
                 let s = settings.lock().unwrap();
                 (
                     s.click_through_locked,
                     s.always_on_top,
-                    s.keyboard_layout == "108",
-                    s.scale.clamp(0.20, 1.50),
                     s.keyboard_layout.clone(),
+                    s.scale.clamp(0.20, 1.50),
                 )
             };
+            let layout_str: &str = cur_layout.as_str();
 
             let is_menu = menu_open.load(Ordering::Relaxed);
             let picker_bounds = *tail_picker_bounds.lock().unwrap();
@@ -1720,9 +1746,9 @@ fn start_hit_test_loop(
             let is_banner = update_banner_open.load(Ordering::Relaxed);
 
             // Continuous ADR-0096-style Windows Z-order guard for borderless & FSO fullscreen games:
-            // checks actual topmost band membership + EnumWindows stacking order against the
-            // foreground window every ~150ms (and shortly after foreground switches), reasserting
-            // HWND_TOPMOST strictly on the window owner thread without stealing focus (SWP_NOACTIVATE).
+            // - Checks O(1) topmost flag every ~200ms (or promptly ~50ms after foreground switch)
+            // - Runs EnumWindows immediately on foreground switches and every ~900ms steady-state
+            //   instead of every 150ms, saving CPU during active gameplay.
             #[cfg(windows)]
             if always_on_top && !is_menu && picker_bounds.is_none() && !is_drag {
                 let fg_raw = win_foreground_hwnd();
@@ -1730,11 +1756,16 @@ fn start_hit_test_loop(
                 if fg_id != last_fg_hwnd {
                     last_fg_hwnd = fg_id;
                     fg_above_attempts = 0;
-                    topmost_check_ticks = 4; // trigger a prompt Z-order check ~50ms after focus switch
+                    fg_just_changed = true;
                 }
-                topmost_check_ticks = topmost_check_ticks.saturating_add(1);
-                if topmost_check_ticks >= 6 {
-                    topmost_check_ticks = 0;
+                let need_check =
+                    fg_just_changed || last_topmost_check.elapsed() >= Duration::from_millis(200);
+                if need_check {
+                    let run_enum = fg_just_changed
+                        || fg_above_attempts > 0
+                        || last_enum_check.elapsed() >= Duration::from_millis(900);
+                    fg_just_changed = false;
+                    last_topmost_check = Instant::now();
                     let our_hwnd_opt = if is_win7_ulw {
                         win7_layered::hwnd()
                     } else {
@@ -1745,13 +1776,21 @@ fn start_hit_test_loop(
                     if let Some(our_hwnd) = our_hwnd_opt {
                         if !win_is_iconic(our_hwnd) {
                             let lost_topmost = !win_is_topmost(our_hwnd);
-                            let fg_above = !lost_topmost
+                            let fg_above = if !lost_topmost
+                                && run_enum
                                 && !fg_raw.is_null()
                                 && fg_raw != our_hwnd
-                                && win_window_is_above(fg_raw, our_hwnd);
+                            {
+                                last_enum_check = Instant::now();
+                                win_window_is_above(fg_raw, our_hwnd)
+                            } else {
+                                false
+                            };
 
                             if !lost_topmost && !fg_above {
-                                fg_above_attempts = 0;
+                                if run_enum {
+                                    fg_above_attempts = 0;
+                                }
                             } else if lost_topmost {
                                 if last_topmost_reassert.elapsed() >= Duration::from_millis(250) {
                                     if is_win7_ulw {
@@ -1795,7 +1834,7 @@ fn start_hit_test_loop(
                     }
                 }
             } else {
-                topmost_check_ticks = 0;
+                fg_just_changed = false;
                 fg_above_attempts = 0;
             }
             let alt_override = input_hook::is_alt_pressed();
@@ -1803,7 +1842,7 @@ fn start_hit_test_loop(
 
             // Map window-relative (rx, ry) into exact pet-local (pet_rx, pet_ry),
             // since at small scales (20%..90%) the pet is anchored bottom-right inside a min-safe menu window!
-            let (bw, bh) = base_dimensions(&layout_str);
+            let (bw, bh) = base_dimensions(layout_str);
             let win_log_w = (w / sf).max(1.0);
             let win_log_h = (h / sf).max(1.0);
             let pet_w_frac = ((bw * cur_scale) / win_log_w).clamp(0.05, 1.0);
@@ -1815,7 +1854,8 @@ fn start_hit_test_loop(
             let inside_pet = pet_rx >= 0.0 && pet_rx <= 1.0 && pet_ry >= 0.0 && pet_ry <= 1.0;
 
             let (over_interactive, raw_over_cat) = if inside_pet {
-                is_over_interactive_silhouette(pet_rx, pet_ry, is_108)
+                // 98 与 108 共用同一块宽画布，命中轮廓一致
+                is_over_interactive_silhouette(pet_rx, pet_ry, layout_str != "65")
             } else {
                 (false, false)
             };
@@ -1828,7 +1868,7 @@ fn start_hit_test_loop(
                 win7_layered::set_over_cat(over_cat);
             }
 
-            let over_banner = is_banner && inside && ry <= 0.19;
+            let over_banner = is_banner && inside && ry <= banner_hit_ry_limit(win_log_h);
             // The picker lives inside the pet window, unlike the separate side menu.
             let over_tail_picker =
                 inside && tail_picker_captures_cursor(picker_bounds, rx, ry, !is_win7_ulw);
@@ -1862,7 +1902,8 @@ fn start_hit_test_loop(
             } else {
                 // Self-heal Windows WS_EX_TRANSPARENT if DWM / Wallpaper Engine / Show-Desktop drifted it
                 #[cfg(windows)]
-                {
+                if inside || last_drift_check.elapsed() >= Duration::from_millis(250) {
+                    last_drift_check = Instant::now();
                     let actual_opt = if is_win7_ulw {
                         win7_layered::is_click_through()
                     } else {
@@ -1871,7 +1912,7 @@ fn start_hit_test_loop(
                     if let Some(actual_transparent) = actual_opt {
                         if actual_transparent != should_ignore {
                             drift_ticks = drift_ticks.saturating_add(1);
-                            if drift_ticks >= 4 {
+                            if drift_ticks >= 3 {
                                 if is_win7_ulw {
                                     win7_layered::set_click_through(should_ignore);
                                 } else {
@@ -1887,13 +1928,29 @@ fn start_hit_test_loop(
                 }
             }
 
-            if (cx, cy) != last_cursor
+            let state_changed = over_cat != last_over_cat
+                || inside_pet != last_inside_pet
                 || alt_override != last_alt_override
-                || effective_locked != last_effective_locked
-            {
+                || effective_locked != last_effective_locked;
+            let cursor_moved = last_cursor.0 == i32::MIN
+                || (cx - last_cursor.0).abs() > 1
+                || (cy - last_cursor.1).abs() > 1;
+            let game_now = game_detect::is_game_active();
+            let min_emit_gap = if inside_pet {
+                Duration::from_millis(30)
+            } else if game_now {
+                Duration::from_millis(65)
+            } else {
+                Duration::from_millis(45)
+            };
+
+            if state_changed || (cursor_moved && last_cursor_emit.elapsed() >= min_emit_gap) {
                 last_cursor = (cx, cy);
+                last_over_cat = over_cat;
+                last_inside_pet = inside_pet;
                 last_alt_override = alt_override;
                 last_effective_locked = effective_locked;
+                last_cursor_emit = Instant::now();
                 let _ = app.emit(
                     "kuro-cursor",
                     WindowCursorInfo {
@@ -1905,6 +1962,16 @@ fn start_hit_test_loop(
                     },
                 );
             }
+
+            // Adaptive polling interval: fast 25ms near/over pet window, low-overhead 50-65ms elsewhere!
+            let near_window = rx >= -0.15 && rx <= 1.15 && ry >= -0.15 && ry <= 1.15;
+            sleep_ms = if near_window || is_drag || is_menu || picker_bounds.is_some() || alt_override {
+                25
+            } else if game_now {
+                65
+            } else {
+                50
+            };
         }
     });
 }
@@ -2179,8 +2246,9 @@ pub fn run() {
     }
 
     let mut initial_settings = load_settings();
-    // Always start unlocked so users who accidentally toggled click-through lock can never be permanently trapped across restarts/upgrades
-    if initial_settings.click_through_locked {
+    // Respect persisted `clickThroughLocked` across restarts (Issue #41).
+    // Emergency CLI escape hatch: launching with `--unlock` clears click-through lock immediately.
+    if std::env::args().any(|a| a == "--unlock") && initial_settings.click_through_locked {
         initial_settings.click_through_locked = false;
         save_settings(&initial_settings);
     }
@@ -2268,6 +2336,7 @@ pub fn run() {
                         sz.height,
                         s.always_on_top,
                     );
+                    win7_layered::set_click_through(s.click_through_locked);
                 } else {
                     let _ = win.set_always_on_top(s.always_on_top);
                     let _ = win.set_position(PhysicalPosition::new(target_x, target_y));
@@ -2411,6 +2480,7 @@ pub fn run() {
             save_window_pos,
             reset_position,
             create_desktop_shortcut,
+            get_cached_update_info,
             check_for_update,
             install_update,
             open_release_page,
@@ -2603,5 +2673,26 @@ mod side_menu_layout_tests {
         let (lx, by) = super::clamp_pet_drag_position(-500, 2000, 420, 440, 0, 0, 1920, 1080);
         assert_eq!(lx, -42);
         assert!(by <= 1080 - 290 && by >= 700, "pet body stays safely visible at bottom edge");
+    }
+
+    #[test]
+    fn banner_hit_limit_covers_toast_at_mini_scales() {
+        // 100% scale (~440px tall): preserves classic 19% top band (~83.6px)
+        assert!((super::banner_hit_ry_limit(440.0) - 0.19).abs() < 1e-6);
+        // 36% scale (~160px tall): 54/160 = 0.3375 so 54px toast stays 100% clickable
+        let lim36 = super::banner_hit_ry_limit(160.0);
+        assert!(lim36 * 160.0 >= 53.9 && lim36 <= 0.55);
+        // 20% mini scale (~95px tall): clamped at 55% so toast never steals the whole cat
+        let lim20 = super::banner_hit_ry_limit(95.0);
+        assert!((lim20 - 0.55).abs() < 1e-6);
+    }
+
+    #[test]
+    fn click_through_lock_persists_in_settings_json() {
+        let mut s = crate::config::AppSettings::default();
+        s.click_through_locked = true;
+        let json = serde_json::to_string(&s).expect("serialize settings");
+        let parsed: crate::config::AppSettings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(parsed.click_through_locked, "clickThroughLocked must round-trip as true");
     }
 }

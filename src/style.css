@@ -61,6 +61,12 @@ html.win7-ulw-mode .tail-picker-bar {
   margin-top: 5px;
 }
 
+.render-mode-pills .kb-pill {
+  white-space: nowrap;
+  font-size: 10.5px;
+  padding: 4.5px 2px;
+}
+
 .collar-pills {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -301,6 +307,16 @@ html.win7-ulw-mode #collar-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 5px;
+}
+
+.kb-pills--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.kb-pills--3 .kb-pill {
+  font-size: 10px;
+  padding: 4.5px 2px;
+  white-space: nowrap;
 }
 
 .kb-pill {
@@ -682,6 +698,31 @@ html.win7-ulw-mode #collar-row {
   color: #ffffff;
 }
 
+@media (max-width: 260px) {
+  .update-toast {
+    top: 6px;
+    gap: 4px;
+    max-width: calc(100vw - 10px);
+    padding: 3.5px 5px 3.5px 7px;
+    font-size: 10px;
+  }
+
+  .update-toast-text {
+    max-width: 112px;
+  }
+
+  .update-toast-btn {
+    font-size: 9.5px;
+    padding: 2px 6px;
+  }
+
+  .update-toast-close {
+    width: 15px;
+    height: 15px;
+    font-size: 12px;
+  }
+}
+
 @keyframes toastPop {
   from {
     opacity: 0;
@@ -761,4 +802,140 @@ html.win7-ulw-mode .floating-side-menu {
 
 .menu-item.hidden {
   display: none;
+}
+
+/* Option B: Two-tab zero-scroll floating side menu */
+.floating-side-menu.tab-menu-layout {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 7px;
+}
+
+.menu-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  margin: 2px 2px 6px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.menu-tab-btn {
+  border: none;
+  border-radius: 6.5px;
+  padding: 5.5px 4px;
+  font-size: 11.2px;
+  font-weight: 600;
+  color: #9ca3af;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.menu-tab-btn:hover {
+  color: #e5e7eb;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.menu-tab-btn.active {
+  background: #c8f538;
+  color: #111214;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(200, 245, 56, 0.25);
+}
+
+.tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.tab-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 5px;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-panel.hidden {
+  display: none;
+}
+
+.tab-body .menu-item {
+  padding: 5.5px 9px;
+  font-size: 12px;
+}
+
+.tab-body .menu-scale-row {
+  padding: 4px 9px 4.5px;
+  gap: 5px;
+}
+
+.tab-body .menu-sep {
+  margin: 3.5px 6px;
+}
+
+.tab-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.footer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6.5px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eceef2;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.footer-btn:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.footer-btn.update-ready {
+  border-color: rgba(200, 245, 56, 0.55);
+  background: rgba(200, 245, 56, 0.15);
+  color: #dffb7f;
+}
+
+.footer-btn.update-ready:hover {
+  background: rgba(200, 245, 56, 0.24);
+}
+
+.footer-btn.danger {
+  color: #ff8080;
+  border-color: rgba(255, 92, 92, 0.26);
+  background: rgba(255, 92, 92, 0.08);
+  padding: 6.5px 12px;
+}
+
+.footer-btn.danger:hover {
+  background: rgba(255, 92, 92, 0.18);
 }

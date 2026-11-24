@@ -143,7 +143,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_settings",
-            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|108, keyboardOrientation cat|viewer, tailKeyMode smart|custom|edge|off, tailKeyIds string[], autostart, mouseInvert cat-view mirror).",
+            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|98|108, keyboardOrientation cat|viewer, tailKeyMode smart|custom|edge|off, tailKeyIds string[], autostart).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -152,8 +152,9 @@ fn tool_definitions() -> Value {
                     "collarColor": { "type": "string", "enum": ["none", "red", "blue", "pink", "green"], "description": "Optional 3D collar & gold bell color in 3D mode." },
                     "headphoneMode": { "type": "string", "enum": ["auto", "on", "off"], "description": "Gaming headset mode: 'auto' (automatically wears headphones when a PC game is active), 'on' (always on), or 'off'." },
                     "mouseInvert": { "type": "boolean", "description": "Cat-view mirror: the pet reacts to the mouse as if it were on the opposite side of the desk (both axes flipped)." },
+                    "purrAlwaysOn": { "type": "boolean", "description": "Keep a soft idle purr running even when nobody is petting the cat." },
                     "scale": { "type": "number", "minimum": 0.2, "maximum": 1.5 },
-                    "keyboardLayout": { "type": "string", "enum": ["65", "108"] },
+                    "keyboardLayout": { "type": "string", "enum": ["65", "98", "108"], "description": "Physical keyboard layout: '65' compact, '98' 980-style with numpad (compact), '108' full-size." },
                     "keyboardOrientation": { "type": "string", "enum": ["cat", "viewer"] },
                     "tailKeyMode": { "type": "string", "enum": ["smart", "custom", "edge", "off"] },
                     "tailKeyIds": {
@@ -300,6 +301,9 @@ fn execute_tool(name: &str, args: &Value, on_change: &dyn Fn()) -> Value {
             }
             if let Some(b) = args.get("mouseInvert").and_then(|v| v.as_bool()) {
                 s.mouse_invert = b;
+            }
+            if let Some(b) = args.get("purrAlwaysOn").and_then(|v| v.as_bool()) {
+                s.purr_always_on = b;
             }
             if let Some(layout) = args.get("keyboardLayout").and_then(|v| v.as_str()) {
                 s.keyboard_layout = crate::config::normalize_keyboard_layout(layout);

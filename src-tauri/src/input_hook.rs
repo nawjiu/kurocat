@@ -1,6 +1,6 @@
 use serde::Serialize;
 #[cfg(windows)]
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicI32, AtomicU32};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::OnceLock;
@@ -77,6 +77,12 @@ pub fn set_password_privacy_active(active: bool) {
 #[cfg(windows)]
 static WIN_HOOK_TID: AtomicU32 = AtomicU32::new(0);
 #[cfg(windows)]
+static LAST_HOOK_MOUSE_MS: AtomicU32 = AtomicU32::new(0);
+#[cfg(windows)]
+static LAST_HOOK_MOUSE_X: AtomicI32 = AtomicI32::new(i32::MIN);
+#[cfg(windows)]
+static LAST_HOOK_MOUSE_Y: AtomicI32 = AtomicI32::new(i32::MIN);
+#[cfg(windows)]
 const WM_KURO_PAUSE_TOGGLE: u32 = 0x8007; // WM_APP + 7
 
 fn is_alt_vk(vk: u32) -> bool {
@@ -89,6 +95,12 @@ pub fn is_alt_pressed() -> bool {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
         let async_down = unsafe { (GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0 };
         if async_down {
+            return true;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if macos_hook::is_alt_pressed() {
             return true;
         }
     }
@@ -541,7 +553,14 @@ pub fn start_global_hooks(app: AppHandle) {
                             }
                         }
                         let now = Instant::now();
-                        if now.duration_since(last_mouse_emit) >= Duration::from_millis(16) {
+                        // Cat eye-tracking & mouse springs smoothly interpolate 30Hz (20Hz in PC games),
+                        // cutting 1000Hz-8000Hz gaming mouse IPC/JSON storms dramatically.
+                        let min_gap = if crate::game_detect::is_game_active() {
+                            Duration::from_millis(50)
+                        } else {
+                            Duration::from_millis(33)
+                        };
+                        if now.duration_since(last_mouse_emit) >= min_gap {
                             last_mouse_emit = now;
                             last_mouse_xy = Some((x, y));
                             let (nx, ny) = normalize_screen_point(x, y);
@@ -582,19 +601,38 @@ pub fn start_global_hooks(app: AppHandle) {
 
 #[cfg(windows)]
 fn normalize_screen_point(x: i32, y: i32) -> (f64, f64) {
+    use std::cell::Cell;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
         SM_YVIRTUALSCREEN,
     };
-    unsafe {
-        let vx = GetSystemMetrics(SM_XVIRTUALSCREEN) as f64;
-        let vy = GetSystemMetrics(SM_YVIRTUALSCREEN) as f64;
-        let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1) as f64;
-        let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1) as f64;
-        let nx = ((x as f64 - vx) / vw).clamp(0.0, 1.0);
-        let ny = ((y as f64 - vy) / vh).clamp(0.0, 1.0);
-        (nx, ny)
+
+    thread_local! {
+        static CACHE: Cell<(Instant, f64, f64, f64, f64)> =
+            Cell::new((Instant::now() - Duration::from_secs(10), 0.0, 0.0, 1920.0, 1080.0));
     }
+
+    let (vx, vy, vw, vh) = CACHE.with(|c| {
+        let (ts, vx, vy, vw, vh) = c.get();
+        if ts.elapsed() >= Duration::from_secs(2) {
+            let (nvx, nvy, nvw, nvh) = unsafe {
+                (
+                    GetSystemMetrics(SM_XVIRTUALSCREEN) as f64,
+                    GetSystemMetrics(SM_YVIRTUALSCREEN) as f64,
+                    GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1) as f64,
+                    GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1) as f64,
+                )
+            };
+            c.set((Instant::now(), nvx, nvy, nvw, nvh));
+            (nvx, nvy, nvw, nvh)
+        } else {
+            (vx, vy, vw, vh)
+        }
+    });
+
+    let nx = ((x as f64 - vx) / vw).clamp(0.0, 1.0);
+    let ny = ((y as f64 - vy) / vh).clamp(0.0, 1.0);
+    (nx, ny)
 }
 
 #[cfg(target_os = "macos")]
@@ -669,10 +707,22 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: usize, lparam: isiz
         if let Some(tx) = HOOK_TX.get() {
             match msg {
                 WM_MOUSEMOVE => {
-                    let _ = tx.send(RawHookMsg::MouseMove {
-                        x: ms.pt.x,
-                        y: ms.pt.y,
-                    });
+                    // Ultra-fast in-hook pre-filter (zero syscalls!) so 1000Hz-8000Hz gaming mice
+                    // never flood the Rust channel or stall WH_MOUSE_LL!
+                    let px = ms.pt.x;
+                    let py = ms.pt.y;
+                    let lx = LAST_HOOK_MOUSE_X.load(Ordering::Relaxed);
+                    let ly = LAST_HOOK_MOUSE_Y.load(Ordering::Relaxed);
+                    let now_ms = ms.time;
+                    let prev_ms = LAST_HOOK_MOUSE_MS.load(Ordering::Relaxed);
+                    if ((px - lx).abs() > 1 || (py - ly).abs() > 1)
+                        && (lx == i32::MIN || now_ms.wrapping_sub(prev_ms) >= 24)
+                    {
+                        LAST_HOOK_MOUSE_X.store(px, Ordering::Relaxed);
+                        LAST_HOOK_MOUSE_Y.store(py, Ordering::Relaxed);
+                        LAST_HOOK_MOUSE_MS.store(now_ms, Ordering::Relaxed);
+                        let _ = tx.send(RawHookMsg::MouseMove { x: px, y: py });
+                    }
                 }
                 WM_LBUTTONDOWN => {
                     let _ = tx.send(RawHookMsg::MouseDown("left"));
@@ -874,6 +924,7 @@ pub mod macos_hook {
     extern "C" {
         fn CGPreflightListenEventAccess() -> bool;
         fn CGRequestListenEventAccess() -> bool;
+        fn CGEventSourceFlagsState(state_id: i32) -> u64;
         fn CGEventTapCreate(
             tap: u32,
             place: u32,
@@ -1541,6 +1592,14 @@ pub mod macos_hook {
                 CFRunLoopStop(CFRunLoopGetCurrent());
             }
         }
+    }
+
+    pub fn is_alt_pressed() -> bool {
+        // kCGEventSourceStateCombinedSessionState = 0; works without Accessibility / Input Monitoring
+        // permissions so macOS users can always hold Option to temporarily interact/unlock click-through.
+        const K_CG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE: i32 = 0;
+        let flags = unsafe { CGEventSourceFlagsState(K_CG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE) };
+        (flags & FLAG_OPTION) != 0
     }
 
     pub fn run_macos_hook_loop() {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { CatSkinConfig } from './catSkins';
-import type { KeyboardLayoutId } from './keyboardLayout';
+import { isWideLayout, type KeyboardLayoutId } from './keyboardLayout';
 import type { KeyboardOrientation, TailKeyMode } from './catEngine';
 import { DEFAULT_TAIL_KEY_IDS } from './catEngine';
 import { catAudio } from './audio';
@@ -17,6 +17,7 @@ import {
   TaperTube3D,
   approach,
   clamp,
+  mergeStaticGeometries,
   mix,
   smoothstep,
 } from './keyboard3d';
@@ -83,7 +84,7 @@ interface SimpleLimb3D {
   update(point: (t: number, out: THREE.Vector3) => void, radius: (t: number) => number): void;
 }
 
-const CAP_GEO = new THREE.SphereGeometry(1, 14, 10);
+const CAP_GEO = new THREE.SphereGeometry(1, 10, 8);
 
 function createCleanLimb(
   parent: THREE.Object3D,
@@ -512,7 +513,6 @@ export class KuroCatEngine3D {
   private readonly homePos = new THREE.Vector3(0.02, 0, -0.02);
   private readonly bodyGeo: THREE.LatheGeometry;
   private readonly bodyMesh: THREE.Mesh;
-  private readonly bodyRestPos: Float32Array;
   private readonly outlineSamplePts: THREE.Vector3[];
 
   // Head mount tracks exact head pivot inside the continuous one-piece body mesh
@@ -690,7 +690,13 @@ export class KuroCatEngine3D {
 
   private rafId: number | null = null;
   private idleTimer: number | null = null;
+  private isIdlePacing = false;
   private lastFrameMs = 0;
+  private directRafPrevMs = 0;
+  private vsyncMs = 16.67;
+  private vsyncSamples = 0;
+  private gameActive = false;
+  private lastCamKey = '';
   private elapsed = 0;
   private lastInput = 0;
   private lastKey = -100;
@@ -739,9 +745,18 @@ export class KuroCatEngine3D {
   private readonly tmpV1 = new THREE.Vector3();
   private readonly tmpV2 = new THREE.Vector3();
   private readonly tmpV3 = new THREE.Vector3();
-  private readonly tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-  private readonly tmpQuat = new THREE.Quaternion();
-  private readonly tmpRotV = new THREE.Vector3();
+  private readonly tmpTailAttached = new THREE.Vector3();
+  private readonly tmpTailLoose = new THREE.Vector3();
+  private readonly tmpTailScratch = new THREE.Vector3();
+  private readonly tmpTailPath = [
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+  ];
+  private readonly tmpPawLocal = new THREE.Vector3();
+  private readonly tmpArmOff = new THREE.Vector3();
+  private readonly tmpFxPos = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement, options?: { embedded?: boolean }) {
     this.canvas = canvas;
@@ -750,10 +765,11 @@ export class KuroCatEngine3D {
       canvas,
       antialias: true,
       alpha: true,
+      stencil: false,
       premultipliedAlpha: true,
-      powerPreference: 'high-performance',
+      powerPreference: 'low-power',
     });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    this.renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
@@ -803,12 +819,12 @@ export class KuroCatEngine3D {
     );
     this.outlineSamplePts = bodyCurve.getSpacedPoints(360);
     const profile = bodyCurve
-      .getSpacedPoints(64)
+      .getSpacedPoints(48)
       .map((q) => new THREE.Vector2(Math.max(0, q.x), q.y));
     profile[0].x = 0;
     profile[profile.length - 1].x = 0;
 
-    this.bodyGeo = new THREE.LatheGeometry(profile, 72);
+    this.bodyGeo = new THREE.LatheGeometry(profile, 56);
     // Bake Z_SCALE directly into geometry so 3D head-tilt vertex rotation has ZERO ellipse distortion!
     const bPos = this.bodyGeo.attributes.position;
     for (let i = 0; i < bPos.count; i++) {
@@ -816,9 +832,9 @@ export class KuroCatEngine3D {
     }
     this.bodyGeo.computeVertexNormals();
     this.bodyGeo.setAttribute('rest', this.bodyGeo.attributes.position.clone());
-    this.bodyRestPos = Float32Array.from(this.bodyGeo.attributes.position.array);
 
     this.bodyMesh = new THREE.Mesh(this.bodyGeo, this.furSystem.createMaterial('CAT_BODY'));
+    this.bodyMesh.frustumCulled = false;
     this.catRoot.add(this.bodyMesh);
     this.petMeshes.push(this.bodyMesh);
 
@@ -902,7 +918,7 @@ export class KuroCatEngine3D {
       new THREE.Vector2(0, -0.05),
       ...earPts.map(([r, y]) => new THREE.Vector2(r, y)),
     ];
-    const earGeo = new THREE.LatheGeometry(new THREE.SplineCurve(earSplinePts).getSpacedPoints(28), 36);
+    const earGeo = new THREE.LatheGeometry(new THREE.SplineCurve(earSplinePts).getSpacedPoints(20), 26);
     earGeo.setAttribute('rest', earGeo.attributes.position.clone());
     for (const s of [-1, 1] as const) {
       const g = new THREE.Group();
@@ -951,9 +967,10 @@ export class KuroCatEngine3D {
       );
       squintSlit.mesh.visible = false;
 
-      const blushGeo = this.makeCurvedFacePatchGeo(lx + s * 0.06, ly - 0.155, 0.10, 0.056, 0.016, 10);
+      const blushGeo = this.makeCurvedFacePatchGeo(lx + s * 0.06, ly - 0.155, 0.10, 0.056, 0.016, 8);
       const blush = new THREE.Mesh(blushGeo, this.blushMat);
       blush.renderOrder = 9;
+      blush.visible = false;
 
       this.headMount.add(blush, eyeMesh, closedArc.mesh, squintSlit.mesh);
       this.eyes.push({
@@ -966,29 +983,37 @@ export class KuroCatEngine3D {
       });
     }
 
-    // 7) Dainty Short KuroCat Cheek Whiskers (matching original catEngine.ts — delicate & understated!)
-    for (const s of [-1, 1] as const) {
-      for (let i = 0; i < 3; i++) {
-        const tube = new TaperTube3D(8, 4, this.whiskerMat, 12);
-        const y0 = -0.085 - i * 0.048;
-        const x0 = s * 0.38;
-        const z0 = this.surfaceZ(x0, y0) + 0.012;
-        const a = new THREE.Vector3(x0, y0, z0);
-        const c = new THREE.Vector3(s * 0.48, y0 - 0.008 - i * 0.006, z0 - 0.03);
-        const b = new THREE.Vector3(s * 0.58, y0 - 0.022 - i * 0.016, z0 - 0.09);
-        tube.update(
-          (t, out) => {
-            const u = 1 - t;
-            out.set(
-              u * u * a.x + 2 * u * t * c.x + t * t * b.x,
-              u * u * a.y + 2 * u * t * c.y + t * t * b.y,
-              u * u * a.z + 2 * u * t * c.z + t * t * b.z,
-            );
-          },
-          (t) => 0.0042 * (1 - 0.35 * t),
-        );
-        this.headMount.add(tube.mesh);
+    // 7) Dainty Short KuroCat Cheek Whiskers merged into 1 single static draw call (was 6 draw calls!)
+    {
+      const whiskerGeos: Array<{ geo: THREE.BufferGeometry }> = [];
+      for (const s of [-1, 1] as const) {
+        for (let i = 0; i < 3; i++) {
+          const tube = new TaperTube3D(8, 4, this.whiskerMat, 12);
+          const y0 = -0.085 - i * 0.048;
+          const x0 = s * 0.38;
+          const z0 = this.surfaceZ(x0, y0) + 0.012;
+          const a = new THREE.Vector3(x0, y0, z0);
+          const c = new THREE.Vector3(s * 0.48, y0 - 0.008 - i * 0.006, z0 - 0.03);
+          const b = new THREE.Vector3(s * 0.58, y0 - 0.022 - i * 0.016, z0 - 0.09);
+          tube.update(
+            (t, out) => {
+              const u = 1 - t;
+              out.set(
+                u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+                u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+                u * u * a.z + 2 * u * t * c.z + t * t * b.z,
+              );
+            },
+            (t) => 0.0042 * (1 - 0.35 * t),
+          );
+          whiskerGeos.push({ geo: tube.mesh.geometry });
+        }
       }
+      const mergedWhiskers = mergeStaticGeometries(whiskerGeos);
+      for (const w of whiskerGeos) w.geo.dispose();
+      const whiskerMesh = new THREE.Mesh(mergedWhiskers, this.whiskerMat);
+      whiskerMesh.renderOrder = 12;
+      this.headMount.add(whiskerMesh);
     }
 
     // 8) Delicate 3D Nose & "ω" Mouth (shown on Ragdoll / Tabby / Calico / Tuxedo / Siamese; hidden on pure Black Cat!)
@@ -1028,46 +1053,42 @@ export class KuroCatEngine3D {
       0.5,
     );
     this.tailLimb = createCleanLimb(this.scene, {
-      segments: 28,
-      radial: 14,
+      segments: 22,
+      radial: 10,
       fill: this.furSystem.createMaterial('TAIL'),
       capStart: false,
     });
 
     // 10) Sleek Unified KuroCat Arms + Soft Sculpted Plush Paws (tuck neatly onto front belly when idle!)
-    const toeGeo = new THREE.PlaneGeometry(0.024, 0.28);
-    toeGeo.rotateX(-Math.PI / 2);
+    const singleToeGeo = new THREE.PlaneGeometry(0.024, 0.28);
+    singleToeGeo.rotateX(-Math.PI / 2);
+    const mergedToesGeo = mergeStaticGeometries([
+      { geo: singleToeGeo, matrix: new THREE.Matrix4().makeTranslation(-0.28, 0.68, 0.70) },
+      { geo: singleToeGeo, matrix: new THREE.Matrix4().makeTranslation(0.28, 0.68, 0.70) },
+    ]);
+    singleToeGeo.dispose();
+
     for (const s of [-1, 1] as const) {
       const limb = createCleanLimb(this.scene, {
-        segments: 22,
-        radial: 16,
+        segments: 16,
+        radial: 10,
         fill: this.furSystem.createMaterial('ARM', s),
         order: 18,
       });
       const paw = new THREE.Mesh(pawGeo, this.pawMat);
       paw.renderOrder = 20;
-      for (const tx of [-0.28, 0.28]) {
-        const toe = new THREE.Mesh(toeGeo, this.toeMat);
-        toe.position.set(tx, 0.68, 0.70);
-        toe.renderOrder = 21;
-        paw.add(toe);
-      }
+      const toes = new THREE.Mesh(mergedToesGeo, this.toeMat);
+      toes.renderOrder = 21;
+      paw.add(toes);
 
-      // Delicate subtle curved front-belly paw-tuck arc (signature KuroCat resting look from showcase-108key!)
-      const tuckArc = new TaperTube3D(14, 4, this.tuckLineMat, 22);
-      tuckArc.update(
-        (t, out) => {
-          const a = mix(-0.95, 0.95, t);
-          out.set(Math.sin(a) * 0.145, -0.055 * Math.cos(a) - 0.02, 0.145);
-        },
-        () => 0.006,
-      );
-      this.scene.add(paw, tuckArc.mesh);
+      const tuckArc = new THREE.Mesh();
+      tuckArc.visible = false;
+      this.scene.add(paw);
       this.arms.push({
         s,
         limb,
         paw,
-        tuckArc: tuckArc.mesh,
+        tuckArc,
         // Cozy mid-lower plush flank shoulder (matches approved 2D 0.65/±43 proportions — shorter, cuter arms!)
         shoulderLocal: new THREE.Vector3(s * 0.54, 0.78, 0.22),
         shoulder: new THREE.Vector3(),
@@ -1119,6 +1140,24 @@ export class KuroCatEngine3D {
     const boomMat = createHeadsetMaterial('#202530', 0.20, 0.20, '#7889a6');
     this.headsetShaderMats.push(shellMat, padMat, metalMat, boomMat);
 
+    // Collect static headset meshes by material and merge into 6 single draw calls (was 23 draw calls / 10.2k tris!)
+    const shellParts: Array<{ geo: THREE.BufferGeometry; matrix?: THREE.Matrix4 }> = [];
+    const padParts: Array<{ geo: THREE.BufferGeometry; matrix?: THREE.Matrix4 }> = [];
+    const metalParts: Array<{ geo: THREE.BufferGeometry; matrix?: THREE.Matrix4 }> = [];
+    const ledParts: Array<{ geo: THREE.BufferGeometry; matrix?: THREE.Matrix4 }> = [];
+    const disposeLater: THREE.BufferGeometry[] = [];
+
+    const makeLocalMat = (
+      pos: [number, number, number],
+      rot: [number, number, number],
+      scl: [number, number, number],
+    ) => {
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rot[0], rot[1], rot[2]));
+      m.compose(new THREE.Vector3(...pos), q, new THREE.Vector3(...scl));
+      return m;
+    };
+
     // 1) Main outer headband arch curving smoothly behind the upright cat ears!
     const archCurve = new THREE.CatmullRomCurve3(
       [
@@ -1133,8 +1172,7 @@ export class KuroCatEngine3D {
       false,
       'centripetal',
     );
-    const bandGeo = new THREE.TubeGeometry(archCurve, 44, 0.046, 14, false);
-    // Flatten headband slightly in Z so it reads like a wide sleek esports strap rather than a wire!
+    const bandGeo = new THREE.TubeGeometry(archCurve, 28, 0.046, 10, false);
     const bPos = bandGeo.attributes.position;
     for (let i = 0; i < bPos.count; i++) {
       const z = bPos.getZ(i);
@@ -1143,26 +1181,27 @@ export class KuroCatEngine3D {
       bPos.setZ(i, z - crownW * 0.012);
     }
     bandGeo.computeVertexNormals();
-    const bandMesh = new THREE.Mesh(bandGeo, shellMat);
-    this.headsetGroup.add(bandMesh);
+    shellParts.push({ geo: bandGeo });
+    disposeLater.push(bandGeo);
 
     // Soft plush inner headband cushion under the crown
     const padPts: THREE.Vector3[] = [];
-    for (let i = 0; i <= 14; i++) {
-      const u = mix(0.24, 0.76, i / 14);
+    for (let i = 0; i <= 12; i++) {
+      const u = mix(0.24, 0.76, i / 12);
       const p = archCurve.getPoint(u);
       padPts.push(new THREE.Vector3(p.x * 0.96, p.y - 0.036, p.z + 0.012));
     }
     const innerPadGeo = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(padPts, false, 'centripetal'),
-      24,
+      16,
       0.032,
-      12,
+      8,
       false,
     );
-    this.headsetGroup.add(new THREE.Mesh(innerPadGeo, padMat));
+    padParts.push({ geo: innerPadGeo });
+    disposeLater.push(innerPadGeo);
 
-    // Brushed-titanium headband slider arms + accent bridge trim
+    // Brushed-titanium headband slider arms
     for (const s of [-1, 1] as const) {
       const sliderPts = [
         archCurve.getPoint(s < 0 ? 0.02 : 0.98),
@@ -1171,76 +1210,52 @@ export class KuroCatEngine3D {
       ];
       const sliderGeo = new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3(sliderPts),
-        12,
+        8,
         0.052,
-        12,
+        8,
         false,
       );
-      this.headsetGroup.add(new THREE.Mesh(sliderGeo, metalMat));
+      metalParts.push({ geo: sliderGeo });
+      disposeLater.push(sliderGeo);
     }
 
     // 2) Sculpted Over-Ear Plush Earcups (Left -1 & Right +1)
-    const cushionGeo = new THREE.TorusGeometry(0.145, 0.058, 16, 28);
+    const cushionGeo = new THREE.TorusGeometry(0.145, 0.058, 12, 20);
     cushionGeo.rotateY(Math.PI / 2);
 
-    const shellGeo = new THREE.SphereGeometry(0.185, 24, 18);
-    const rimGeo = new THREE.TorusGeometry(0.155, 0.022, 12, 28);
+    const shellGeo = new THREE.SphereGeometry(0.185, 16, 12);
+    const rimGeo = new THREE.TorusGeometry(0.155, 0.022, 10, 20);
     rimGeo.rotateY(Math.PI / 2);
 
-    const ledRingGeo = new THREE.TorusGeometry(0.112, 0.015, 10, 32);
+    const ledRingGeo = new THREE.TorusGeometry(0.112, 0.015, 8, 22);
     ledRingGeo.rotateY(Math.PI / 2);
 
-    const centerCapGeo = new THREE.CylinderGeometry(0.068, 0.078, 0.032, 20);
+    const centerCapGeo = new THREE.CylinderGeometry(0.068, 0.078, 0.032, 14);
     centerCapGeo.rotateZ(Math.PI / 2);
 
-    const dotGeo = new THREE.SphereGeometry(0.024, 12, 10);
+    const dotGeo = new THREE.SphereGeometry(0.024, 10, 8);
+    const yokeGeo = new THREE.CylinderGeometry(0.036, 0.042, 0.09, 10);
+    disposeLater.push(cushionGeo, shellGeo, rimGeo, ledRingGeo, centerCapGeo, dotGeo, yokeGeo);
 
     for (const s of [-1, 1] as const) {
-      const cup = new THREE.Group();
-      cup.position.set(s * 0.652, 0.045, 0.012);
-      cup.rotation.set(0, s * 0.08, -s * 0.10);
+      const cupMat = makeLocalMat([s * 0.652, 0.045, 0.012], [0, s * 0.08, -s * 0.10], [1, 1, 1]);
+      const pushCup = (
+        arr: Array<{ geo: THREE.BufferGeometry; matrix?: THREE.Matrix4 }>,
+        geo: THREE.BufferGeometry,
+        pos: [number, number, number],
+        rot: [number, number, number],
+        scl: [number, number, number],
+      ) => {
+        arr.push({ geo, matrix: cupMat.clone().multiply(makeLocalMat(pos, rot, scl)) });
+      };
 
-      // Squishy memory-foam cushion hugging the cheek
-      const cushion = new THREE.Mesh(cushionGeo, padMat);
-      cushion.scale.set(0.95, 1.18, 0.94);
-      cup.add(cushion);
-
-      // Matte-charcoal domed outer housing
-      const shell = new THREE.Mesh(shellGeo, shellMat);
-      shell.position.set(s * 0.048, 0, 0);
-      shell.scale.set(0.56, 1.12, 0.90);
-      cup.add(shell);
-
-      // Metallic bevel trim collar
-      const rim = new THREE.Mesh(rimGeo, metalMat);
-      rim.position.set(s * 0.068, 0, 0);
-      rim.scale.set(0.85, 1.12, 0.91);
-      cup.add(rim);
-
-      // Outer brushed-metal badge plate
-      const cap = new THREE.Mesh(centerCapGeo, metalMat);
-      cap.position.set(s * 0.132, 0, 0);
-      cap.scale.set(1.0, 1.08, 0.92);
-      cup.add(cap);
-
-      // Luminous reactive gaming LED ring + center emblem dot!
-      const ledRing = new THREE.Mesh(ledRingGeo, this.headsetLedMat);
-      ledRing.position.set(s * 0.138, 0, 0);
-      ledRing.scale.set(1.0, 1.10, 0.92);
-      cup.add(ledRing);
-
-      const ledDot = new THREE.Mesh(dotGeo, this.headsetLedMat);
-      ledDot.position.set(s * 0.150, 0, 0);
-      ledDot.scale.set(0.45, 1.0, 1.0);
-      cup.add(ledDot);
-
-      // Yoke hinge knob joining earcup to headband slider
-      const yoke = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.042, 0.09, 12), metalMat);
-      yoke.position.set(s * 0.032, 0.195, -0.025);
-      yoke.rotation.z = s * 0.16;
-      cup.add(yoke);
-
-      this.headsetGroup.add(cup);
+      pushCup(padParts, cushionGeo, [0, 0, 0], [0, 0, 0], [0.95, 1.18, 0.94]);
+      pushCup(shellParts, shellGeo, [s * 0.048, 0, 0], [0, 0, 0], [0.56, 1.12, 0.90]);
+      pushCup(metalParts, rimGeo, [s * 0.068, 0, 0], [0, 0, 0], [0.85, 1.12, 0.91]);
+      pushCup(metalParts, centerCapGeo, [s * 0.132, 0, 0], [0, 0, 0], [1.0, 1.08, 0.92]);
+      pushCup(ledParts, ledRingGeo, [s * 0.138, 0, 0], [0, 0, 0], [1.0, 1.10, 0.92]);
+      pushCup(ledParts, dotGeo, [s * 0.150, 0, 0], [0, 0, 0], [0.45, 1.0, 1.0]);
+      pushCup(metalParts, yokeGeo, [s * 0.032, 0.195, -0.025], [0, 0, s * 0.16], [1, 1, 1]);
     }
 
     // 3) Sleek Curved Gaming Boom Microphone extending from the left earcup (-X)
@@ -1250,21 +1265,32 @@ export class KuroCatEngine3D {
       new THREE.Vector3(-0.415, -0.168, 0.495),
       new THREE.Vector3(-0.235, -0.132, 0.562),
     ]);
-    const micArm = new THREE.Mesh(new THREE.TubeGeometry(micCurve, 22, 0.017, 10, false), boomMat);
+    const micArm = new THREE.Mesh(new THREE.TubeGeometry(micCurve, 16, 0.017, 8, false), boomMat);
     this.headsetGroup.add(micArm);
 
-    const micJoint = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 10), metalMat);
-    micJoint.position.set(-0.645, -0.062, 0.072);
-    this.headsetGroup.add(micJoint);
+    const micJointGeo = new THREE.SphereGeometry(0.032, 10, 8);
+    metalParts.push({
+      geo: micJointGeo,
+      matrix: makeLocalMat([-0.645, -0.062, 0.072], [0, 0, 0], [1, 1, 1]),
+    });
+    disposeLater.push(micJointGeo);
 
-    // Plush foam mic windscreen capsule + tiny glowing mint-cyan mic-active LED tip
-    const micTip = new THREE.Mesh(new THREE.SphereGeometry(0.044, 16, 12), padMat);
-    micTip.position.set(-0.222, -0.128, 0.568);
-    micTip.scale.set(1.32, 0.88, 0.88);
-    micTip.rotation.set(0, -0.35, 0.22);
-    this.headsetGroup.add(micTip);
+    const micTipGeo = new THREE.SphereGeometry(0.044, 12, 10);
+    padParts.push({
+      geo: micTipGeo,
+      matrix: makeLocalMat([-0.222, -0.128, 0.568], [0, -0.35, 0.22], [1.32, 0.88, 0.88]),
+    });
+    disposeLater.push(micTipGeo);
 
-    const micLed = new THREE.Mesh(new THREE.SphereGeometry(0.014, 10, 8), this.headsetMicLedMat);
+    this.headsetGroup.add(
+      new THREE.Mesh(mergeStaticGeometries(shellParts), shellMat),
+      new THREE.Mesh(mergeStaticGeometries(padParts), padMat),
+      new THREE.Mesh(mergeStaticGeometries(metalParts), metalMat),
+      new THREE.Mesh(mergeStaticGeometries(ledParts), this.headsetLedMat),
+    );
+    for (const g of disposeLater) g.dispose();
+
+    const micLed = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), this.headsetMicLedMat);
     micLed.position.set(-0.172, -0.118, 0.588);
     this.headsetGroup.add(micLed);
 
@@ -1273,7 +1299,7 @@ export class KuroCatEngine3D {
   }
 
   private makePlushPawGeo(): THREE.SphereGeometry {
-    const g = new THREE.SphereGeometry(1, 28, 18);
+    const g = new THREE.SphereGeometry(1, 18, 12);
     const q = g.attributes.position;
     for (let i = 0; i < q.count; i++) {
       const x = q.getX(i);
@@ -1344,7 +1370,6 @@ export class KuroCatEngine3D {
     const swell =
       1 +
       this.bend.bellySwell * smoothstep(1.30, 0.65, local.y) * smoothstep(0.0, 0.25, local.y);
-    this.catRoot.updateMatrixWorld();
     return out
       .set(
         local.x * swell + this.bend.x * w,
@@ -1355,55 +1380,19 @@ export class KuroCatEngine3D {
   }
 
   /**
-   * Smoothly deforms the continuous one-piece KuroCat body+head mesh every frame:
-   * lower torso bends organically with spine & belly swell; upper head (y0 >= 1.44) locks
-   * rigidly to headMount's exact transform so forehead/cheeks NEVER shear forward over the eyes!
+   * Pushes spine bend + rigid head rotation to the GPU CAT_BODY vertex shader (zero CPU loop,
+   * zero computeVertexNormals, zero per-frame PCIe vertex upload!).
    */
   private deformCatBody(): void {
-    const pos = this.bodyGeo.attributes.position.array as Float32Array;
-    const src = this.bodyRestPos;
-    const { x: bx, z: bz, squash, bellySwell } = this.bend;
-    const { pitch, yaw, roll } = this.headRot;
-    const wHead = this.spineWeight(HEAD_CY);
-    const sHead = this.sinkWeight(HEAD_CY);
-    const headSinkY = HEAD_CY * (1 - squash * sHead);
-
-    for (let i = 0; i < pos.length; i += 3) {
-      const x0 = src[i];
-      const y0 = src[i + 1];
-      const z0 = src[i + 2];
-
-      // Seamless C1 transition from flexible torso into 100% rigid head above the neck [1.14..1.44]
-      const headW = smoothstep(1.14, 1.44, y0);
-      const w = mix(this.spineWeight(y0), wHead, headW);
-      const sw = this.sinkWeight(y0);
-      const swell =
-        1 + bellySwell * smoothstep(1.30, 0.65, y0) * smoothstep(0.0, 0.25, y0);
-
-      let px = x0 * swell;
-      let py = y0;
-      let pz = z0 * swell;
-
-      if (headW > 0.001) {
-        this.tmpEuler.set(pitch * headW, yaw * headW, roll * headW, 'YXZ');
-        this.tmpQuat.setFromEuler(this.tmpEuler);
-        this.tmpRotV.set(px, py - HEAD_CY, pz).applyQuaternion(this.tmpQuat);
-        px = this.tmpRotV.x;
-        py = this.tmpRotV.y + HEAD_CY;
-        pz = this.tmpRotV.z;
-      }
-
-      const torsoY = py * (1 - squash * sw);
-      const headRigidY = py - HEAD_CY + headSinkY;
-
-      pos[i] = px + bx * w;
-      pos[i + 1] = mix(torsoY, headRigidY, headW);
-      pos[i + 2] = pz + bz * w;
-    }
-
-    this.bodyGeo.attributes.position.needsUpdate = true;
-    this.bodyGeo.computeVertexNormals();
-    this.bodyGeo.computeBoundingSphere();
+    this.furSystem.setBodyDeform(
+      this.bend.x,
+      this.bend.z,
+      this.bend.squash,
+      this.bend.bellySwell,
+      this.headRot.pitch,
+      this.headRot.yaw,
+      this.headRot.roll,
+    );
   }
 
   private placeHeadAndCollar(): void {
@@ -1442,11 +1431,14 @@ export class KuroCatEngine3D {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.lastCamKey = '';
   }
 
   public start(): void {
     if (this.rafId !== null || this.idleTimer !== null) return;
     this.lastFrameMs = performance.now();
+    this.directRafPrevMs = 0;
+    this.isIdlePacing = false;
     this.rafId = requestAnimationFrame(this.renderFrame);
   }
 
@@ -1459,16 +1451,37 @@ export class KuroCatEngine3D {
       window.clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+    this.isIdlePacing = false;
+  }
+
+  public setGameActive(active: boolean): void {
+    this.gameActive = Boolean(active);
   }
 
   private readonly renderFrame = (nowMs: number): void => {
     const frameId = this.rafId;
+    const workStart = performance.now();
+
+    // Auto-detect native display VSync period during the first few direct rAF frames
+    if (this.directRafPrevMs > 0 && this.vsyncSamples < 8) {
+      const gap = nowMs - this.directRafPrevMs;
+      if (gap >= 3.2 && gap <= 25) {
+        this.vsyncMs = this.vsyncSamples === 0 ? gap : Math.min(this.vsyncMs, gap);
+        this.vsyncSamples += 1;
+      }
+    }
+
     const dt = Math.min(0.05, Math.max(0.001, (nowMs - this.lastFrameMs) / 1000));
     this.lastFrameMs = nowMs;
     this.update(dt);
     this.renderer.render(this.scene, this.camera);
 
     if (this.rafId !== frameId) return;
+
+    const headsetSettling =
+      Math.abs(this.sHeadset.v) > 0.02 ||
+      Math.abs(this.sHeadset.x - (this.headsetOn ? 1 : 0)) > 0.01;
+
     // Sleep particles continue drawing at the idle rate.
     const busy =
       this.elapsed - this.lastInput < 3.0 ||
@@ -1479,19 +1492,41 @@ export class KuroCatEngine3D {
       this.popups.length > 0 ||
       this.fxList.some((fx) => fx.kind !== 'z') ||
       (this.sleepAmt > 0.02 && this.sleepAmt < 0.98) ||
+      headsetSettling ||
       Math.abs(this.sOrbitAz.v) > 0.05 ||
       Math.abs(this.sOrbitEl.v) > 0.05;
 
-    if (busy) {
+    // Smart adaptive frame pacing:
+    // - Calibrate VSync over first 8 active frames
+    // - On 60Hz monitors in normal mode: native direct rAF (0 timer jitter)
+    // - On 120-240Hz monitors in normal mode: cap cleanly at 60 FPS (cuts 240Hz GPU/CPU by 4x!)
+    // - In Game Eco Mode (foreground PC game detected): cap at 30 FPS (cuts 240Hz GPU/CPU by 8x!)
+    // - Idle awake: ~18 FPS (55ms); Deep sleep: ~12 FPS (85ms)
+    if (busy && (this.vsyncSamples < 8 || (!this.gameActive && this.vsyncMs >= 13.5))) {
+      this.isIdlePacing = false;
+      this.directRafPrevMs = nowMs;
       this.rafId = requestAnimationFrame(this.renderFrame);
       return;
     }
 
+    this.directRafPrevMs = 0;
+    const workMs = performance.now() - workStart;
+    const targetMs = busy
+      ? this.gameActive
+        ? 33.33
+        : 16.67
+      : this.sleepAmt > 0.95
+        ? 85
+        : 55;
+    const sleepMs = Math.max(4, Math.round(targetMs - workMs - this.vsyncMs * 0.35));
+
     this.rafId = null;
+    this.isIdlePacing = !busy;
     this.idleTimer = window.setTimeout(() => {
       this.idleTimer = null;
+      this.isIdlePacing = false;
       this.rafId = requestAnimationFrame(this.renderFrame);
-    }, 40);
+    }, sleepMs);
   };
 
   public setCatSkin(skin: CatSkinConfig): void {
@@ -1554,6 +1589,7 @@ export class KuroCatEngine3D {
       if (next) {
         this.sHeadset.kick(1.8);
       }
+      this.wakeRendering();
     }
   }
 
@@ -1879,9 +1915,11 @@ export class KuroCatEngine3D {
   // ---- Internal helpers ----
 
   private wakeRendering(): void {
-    if (this.idleTimer === null) return;
+    // Only interrupt idle/sleep timers so active 60 FPS / 30 FPS pacing is never defeated by high-Hz mouse storms!
+    if (this.idleTimer === null || !this.isIdlePacing) return;
     window.clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    this.isIdlePacing = false;
     this.rafId = requestAnimationFrame(this.renderFrame);
   }
 
@@ -1988,21 +2026,25 @@ export class KuroCatEngine3D {
     this.elapsed += dt;
     const t = this.elapsed;
 
-    // 1) Camera smooth 360° turntable framing (auto-fits square desktop, 108-key, mobile & wide web with zero clipping!)
+    // 1) Camera smooth 360° turntable framing (skip redundant lookAt matrix rebuild when static)
     const az = (this.sOrbitAz.step(this.orbitAzimuthTarget, dt) * Math.PI) / 180;
     const el = (this.sOrbitEl.step(this.orbitElevTarget, dt) * Math.PI) / 180;
-    const is108 = this.desk.getLayoutId() === '108';
-    const baseDist = is108 ? 9.7 : 8.1;
-    const reqHalfW = is108 ? 1.98 : 1.56;
-    const tanHalfFov = Math.tan((this.camera.fov * Math.PI) / 360);
-    const aspectFitDist = reqHalfW / (tanHalfFov * Math.max(0.55, this.camera.aspect));
-    const dist = Math.max(baseDist, aspectFitDist) / Math.max(0.25, this.renderScale);
-    this.camera.position.set(
-      this.camAnchor.x + Math.sin(az) * Math.cos(el) * dist,
-      this.camAnchor.y + Math.sin(el) * dist,
-      this.camAnchor.z + Math.cos(az) * Math.cos(el) * dist,
-    );
-    this.camera.lookAt(this.camAnchor);
+    const is108 = isWideLayout(this.desk.getLayoutId());
+    const camKey = `${az.toFixed(4)}|${el.toFixed(4)}|${is108 ? 1 : 0}|${this.camera.aspect.toFixed(4)}|${this.renderScale.toFixed(3)}`;
+    if (camKey !== this.lastCamKey) {
+      this.lastCamKey = camKey;
+      const baseDist = is108 ? 9.7 : 8.1;
+      const reqHalfW = is108 ? 1.98 : 1.56;
+      const tanHalfFov = Math.tan((this.camera.fov * Math.PI) / 360);
+      const aspectFitDist = reqHalfW / (tanHalfFov * Math.max(0.55, this.camera.aspect));
+      const dist = Math.max(baseDist, aspectFitDist) / Math.max(0.25, this.renderScale);
+      this.camera.position.set(
+        this.camAnchor.x + Math.sin(az) * Math.cos(el) * dist,
+        this.camAnchor.y + Math.sin(el) * dist,
+        this.camAnchor.z + Math.cos(az) * Math.cos(el) * dist,
+      );
+      this.camera.lookAt(this.camAnchor);
+    }
 
     // 2) Emotional state machine
     this.strokes = this.strokes.filter((s) => t - s < 1.0);
@@ -2248,6 +2290,8 @@ export class KuroCatEngine3D {
     const showOpenEye = !isSleepOrPrivacy && !isPetSquint && !isBlinkClosed;
 
     this.blushMat.opacity += ((petActive ? 0.46 : 0) - this.blushMat.opacity) * approach(8, dt);
+    if (this.blushMat.opacity < 0.004 && !petActive) this.blushMat.opacity = 0;
+    const showBlush = this.blushMat.opacity > 0.004;
     catAudio.setPurrIntensity(petActive ? 0.85 : 0);
 
     const pal = this.currentPalette;
@@ -2255,6 +2299,7 @@ export class KuroCatEngine3D {
     const shineAmt = pal?.eyeCatchlight ? 1.0 + curious * 0.20 : Math.min(1.16, curious * 1.25);
 
     for (const e of this.eyes) {
+      e.blush.visible = showBlush;
       e.mesh.visible = showOpenEye;
       e.closedArc.visible = isSleepOrPrivacy || isBlinkClosed;
       e.squintSlit.visible = isPetSquint;
@@ -2310,10 +2355,10 @@ export class KuroCatEngine3D {
     this.tailPhase += dt * swayRate;
     const tailSway = (1 - 0.7 * this.sleepAmt) * (1 + 0.42 * curious) + (act && act.kind === 'tail' ? 1.35 * actEnv : 0);
 
-    const attached = new THREE.Vector3();
-    const loose = new THREE.Vector3();
-    const tmpTail = new THREE.Vector3();
-    this.catRoot.updateMatrixWorld();
+    const attached = this.tmpTailAttached;
+    const loose = this.tmpTailLoose;
+    const tmpTail = this.tmpTailScratch;
+    this.catRoot.updateMatrixWorld(false);
     for (let i = 0; i < this.tailRestPts.length; i++) {
       const w = i / (this.tailRestPts.length - 1);
       const pt = this.tailCurve.points[i].lerpVectors(this.tailRestPts[i], this.tailSleepPts[i], this.sleepAmt);
@@ -2332,19 +2377,16 @@ export class KuroCatEngine3D {
     }
 
     if (this.tailTap.reach > 0.01 && this.tailTap.keyId) {
-      const tipWorld = this.desk
-        .keyTopWorld(this.tailTap.keyId, this.tailTap.tip)
-        .add(new THREE.Vector3(0, this.tailTap.hover + 0.045, 0));
+      const tipWorld = this.desk.keyTopWorld(this.tailTap.keyId, this.tailTap.tip);
+      tipWorld.y += this.tailTap.hover + 0.045;
       const root = this.tailCurve.points[0];
-      const path = [
-        new THREE.Vector3(root.x + 0.36, 0.28, root.z + 0.22),
-        new THREE.Vector3(tipWorld.x + 0.36, 0.30, mix(root.z, tipWorld.z, 0.52)),
-        new THREE.Vector3(tipWorld.x + 0.26, 0.32, tipWorld.z - 0.06),
-        new THREE.Vector3(tipWorld.x + 0.12, mix(0.32, tipWorld.y + 0.02, 0.5), tipWorld.z + 0.02),
-        tipWorld,
-      ];
+      this.tmpTailPath[0].set(root.x + 0.36, 0.28, root.z + 0.22);
+      this.tmpTailPath[1].set(tipWorld.x + 0.36, 0.30, mix(root.z, tipWorld.z, 0.52));
+      this.tmpTailPath[2].set(tipWorld.x + 0.26, 0.32, tipWorld.z - 0.06);
+      this.tmpTailPath[3].set(tipWorld.x + 0.12, mix(0.32, tipWorld.y + 0.02, 0.5), tipWorld.z + 0.02);
       for (let i = 1; i < this.tailCurve.points.length; i++) {
-        this.tailCurve.points[i].lerp(path[i - 1], this.tailTap.reach);
+        const dst = i - 1 < 4 ? this.tmpTailPath[i - 1] : tipWorld;
+        this.tailCurve.points[i].lerp(dst, this.tailTap.reach);
       }
     }
 
@@ -2365,10 +2407,8 @@ export class KuroCatEngine3D {
       const wantTuck = !activeForMouse && !activeForKey ? 1 : 0;
       paw.tuckWeight += (wantTuck - paw.tuckWeight) * approach(wantTuck ? 6.5 : 22, dt);
 
-      const tuckHome = this.attachLocal(
-        new THREE.Vector3(paw.side * 0.24, 0.16 - this.sleepAmt * 0.06, 0.54),
-        this.tmpV3,
-      );
+      this.tmpPawLocal.set(paw.side * 0.24, 0.16 - this.sleepAmt * 0.06, 0.54);
+      const tuckHome = this.attachLocal(this.tmpPawLocal, this.tmpV3);
 
       if (activeForMouse) {
         const mt = this.desk.mouseTopWorld(this.tmpV1);
@@ -2409,14 +2449,19 @@ export class KuroCatEngine3D {
       const reach = arm.shoulder.distanceTo(arm.hand);
       const lift = mix(0.24, 0.06, clamp((reach - 0.85) / 0.85, 0, 1)) * (1 - tuck * 0.65);
 
-      arm.c1
-        .copy(arm.shoulder)
-        .lerp(arm.hand, 0.36)
-        .add(new THREE.Vector3(arm.s * (onMouse ? 0.09 : 0.14 * (1 - tuck * 0.85)), -0.06 + lift * 0.32, mix(0.18, 0.02, tuck)));
-      arm.c2
-        .copy(arm.shoulder)
-        .lerp(arm.hand, 0.72)
-        .add(new THREE.Vector3(arm.s * (onMouse ? 0.05 : 0.05 * (1 - tuck)), lift * 0.85, mix(0.12, 0.02, tuck)));
+      this.tmpArmOff.set(
+        arm.s * (onMouse ? 0.09 : 0.14 * (1 - tuck * 0.85)),
+        -0.06 + lift * 0.32,
+        mix(0.18, 0.02, tuck),
+      );
+      arm.c1.copy(arm.shoulder).lerp(arm.hand, 0.36).add(this.tmpArmOff);
+
+      this.tmpArmOff.set(
+        arm.s * (onMouse ? 0.05 : 0.05 * (1 - tuck)),
+        lift * 0.85,
+        mix(0.12, 0.02, tuck),
+      );
+      arm.c2.copy(arm.shoulder).lerp(arm.hand, 0.72).add(this.tmpArmOff);
 
       arm.limb.update(
         (u, out) => {
@@ -2438,9 +2483,6 @@ export class KuroCatEngine3D {
       arm.paw.position.set(arm.hand.x, arm.hand.y - 0.010, arm.hand.z + 0.014);
       arm.paw.scale.set(0.126 * pawScale, 0.080 * pawScale, 0.118 * pawScale);
       arm.paw.rotation.y = Math.atan2(arm.hand.x - arm.c2.x, Math.max(0.1, arm.hand.z - arm.c2.z)) * 0.42;
-
-      // Hide floating grey arc — the real sculpted 3D bean paws read cleanly on their own!
-      arm.tuckArc.visible = false;
     }
 
     // 10) Floating Key Bubbles, Anger Mark 💢 & Sleep Zzz FX
@@ -2465,9 +2507,9 @@ export class KuroCatEngine3D {
     if (cross > 0.25) {
       this.angerSprite.visible = true;
       const pulse = 1 + 0.10 * Math.sin(t * 14) + (t - this.lastSlam < 0.22 ? 0.16 : 0);
-      this.headMount.updateMatrixWorld();
-      const headWorld = new THREE.Vector3(-0.52, 0.44, 0.18).applyMatrix4(this.headMount.matrixWorld);
-      this.angerSprite.position.copy(headWorld);
+      this.headMount.updateMatrixWorld(false);
+      this.tmpFxPos.set(-0.52, 0.44, 0.18).applyMatrix4(this.headMount.matrixWorld);
+      this.angerSprite.position.copy(this.tmpFxPos);
       this.angerSprite.scale.setScalar(0.30 * pulse * smoothstep(0.25, 0.65, cross));
     } else {
       this.angerSprite.visible = false;
@@ -2475,8 +2517,8 @@ export class KuroCatEngine3D {
 
     if (this.sleepAmt > 0.65 && t >= this.nextZ) {
       this.nextZ = t + 1.35;
-      this.headMount.updateMatrixWorld();
-      const zPos = new THREE.Vector3(0.46, 0.42, 0.16).applyMatrix4(this.headMount.matrixWorld);
+      this.headMount.updateMatrixWorld(false);
+      const zPos = this.tmpFxPos.set(0.46, 0.42, 0.16).applyMatrix4(this.headMount.matrixWorld);
       this.spawnFx('z', zPos, new THREE.Vector3(0.08, 0.36, 0), 0.22, 2.3);
     }
 
