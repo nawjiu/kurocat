@@ -323,7 +323,6 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uPupilRad: { value: new THREE.Vector2(0.43, 0.67) },
       uCross: { value: 0 },
       uCurious: { value: 0 },
-      uCharm: { value: 0 },
       uShineAmt: { value: 0 },
       uIs3D: { value: 1 },
       uLimbalAmt: { value: 0.28 },
@@ -354,7 +353,6 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uniform vec2 uPupilRad;
       uniform float uCross;
       uniform float uCurious;
-      uniform float uCharm;
       uniform float uShineAmt;
       uniform float uIs3D;
       uniform float uLimbalAmt;
@@ -384,14 +382,6 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
           lidAlpha = 1.0 - smoothstep(lashH - aa, lashH + aa, lidDist);
           lashMask = smoothstep(-aa, aa, lidDist);
           lidShadow = smoothstep(-0.24, 0.0, lidDist) * 0.25 * uCross;
-        } else if (uCharm > 0.01) {
-          // 哼唧媚眼：上眼睑压下来一大半 + 外眼角微微上扬，边缘做柔和过渡（不切硬边）
-          float lidY = mix(1.30, 0.45, uCharm) + uSide * p.x * 0.16 * uCharm;
-          float lashH = 0.050 + 0.060 * uCharm;
-          float lidDist = p.y - lidY;
-          lidAlpha *= 1.0 - smoothstep(lashH - 0.070, lashH + 0.020, lidDist);
-          lashMask = max(lashMask, (1.0 - smoothstep(lashH - 0.070, lashH + 0.010, lidDist)) * 0.78 * uCharm);
-          lidShadow = max(lidShadow, smoothstep(-0.24, 0.0, lidDist) * 0.20 * uCharm);
         }
 
         // Luminous glass-cabochon iris gradient
@@ -1645,7 +1635,7 @@ export class KuroCatEngine3D {
     };
   }
 
-  /** 哼唧时让眼睛妩媚一点（半眯 + 外眼角上扬） */
+  /** 被按住哼唧时：点亮自带的水光高光眼（不改眼型） */
   public setSqueakCharm(active: boolean): void {
     const next = active ? 1 : 0;
     if (this.squeakCharmTarget === next) return;
@@ -1728,7 +1718,16 @@ export class KuroCatEngine3D {
     const k = this.desk.resolveKey(vk);
     if (!k) return;
     this.wake();
-    if (repeat) return;
+    if (repeat) {
+      // 自动重复 = 这颗键其实还按着。万一之前收到过一次误报的「抬起」，
+      // 这里把键帽和爪子顺手扶回按下状态（不重放开场动画），长按就不会被拆成两段。
+      if (!k.down) {
+        this.desk.setKeyDown(k.spec.id, true);
+        if (this.paws.L.keyId === k.spec.id) this.paws.L.down = true;
+        if (this.paws.R.keyId === k.spec.id) this.paws.R.down = true;
+      }
+      return;
+    }
 
     this.lastKey = this.elapsed;
     this.strokes.push(this.elapsed);
@@ -2310,7 +2309,7 @@ export class KuroCatEngine3D {
     const isBlinkClosed = !isSleepOrPrivacy && !isPetSquint && blinkClose > 0.58;
     const showOpenEye = !isSleepOrPrivacy && !isPetSquint && !isBlinkClosed;
 
-    // 哼唧媚眼：睡着、眯眼、眨眼、生气时自动退场
+    // 被按住（哼唧中）：不改眼型，只把自带的那双「有高光」的眼睛点亮；睡着、眨眼、生气时自动退场
     this.squeakCharm += (this.squeakCharmTarget - this.squeakCharm) * approach(7, dt);
     const charmAmt = clamp(
       this.squeakCharm * (1 - Math.max(blinkClose, this.privacyClose, this.sleepAmt)) * (1 - cross),
@@ -2318,7 +2317,7 @@ export class KuroCatEngine3D {
       1,
     );
 
-    const blushWant = Math.max(petActive ? 0.46 : 0, charmAmt * 0.52);
+    const blushWant = petActive ? 0.46 : 0;
     this.blushMat.opacity += (blushWant - this.blushMat.opacity) * approach(8, dt);
     if (this.blushMat.opacity < 0.004 && blushWant <= 0) this.blushMat.opacity = 0;
     const showBlush = this.blushMat.opacity > 0.004;
@@ -2326,17 +2325,16 @@ export class KuroCatEngine3D {
 
     const pal = this.currentPalette;
     // Match original KuroCat 2D: Black Cat shows NO permanent catchlights when calm, sparkling catchlights when Curious!
-    // 哼唧时也补一点水光，半眯的眼睛才有媚气
+    // 被按住时同样点亮自带的水光高光（跟「好奇」那套高光是同一双眼睛）
     const shineAmt = pal?.eyeCatchlight
       ? 1.0 + Math.max(curious * 0.20, charmAmt * 0.12)
-      : Math.min(1.16, Math.max(curious * 1.25, charmAmt * 0.95));
+      : Math.min(1.16, Math.max(curious * 1.25, charmAmt * 1.05));
 
     for (const e of this.eyes) {
       e.blush.visible = showBlush;
       e.mesh.visible = showOpenEye;
       e.closedArc.visible = isSleepOrPrivacy || isBlinkClosed;
       e.squintSlit.visible = isPetSquint;
-      e.mat.uniforms.uCharm.value = charmAmt;
 
       if (showOpenEye) {
         const irisRx = 0.156 * (1 + curious * 0.06);

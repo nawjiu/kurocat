@@ -17,11 +17,6 @@ const SQUEAK_LEVEL = 0.72;
 const SQUEAK_HOLD_DELAY_MS = 1000;
 /** 一旦开始叫，最少叫满多久（毫秒），避免刚出声就被掐断 */
 const SQUEAK_MIN_PLAY_MS = 2000;
-/**
- * 松手判定宽限（毫秒）：鼠标钩子偶尔会丢帧/抖动，把一次真实长按拆成「松开 + 再按下」。
- * 这个窗口内的再次按下算作同一次长按——既不会重新数 1 秒，也不会把哼唧掐断重来。
- */
-const SQUEAK_RELEASE_GRACE_MS = 260;
 
 class CatAudio {
   private ctx: AudioContext | null = null;
@@ -45,7 +40,6 @@ class CatAudio {
   private squeakHeld = false;
   private squeakArmTimer: number | null = null;
   private squeakMinTimer: number | null = null;
-  private squeakReleaseTimer: number | null = null;
   private squeakStartedAt = 0;
   private squeakListeners = new Set<(active: boolean) => void>();
 
@@ -85,11 +79,6 @@ class CatAudio {
   public startSqueak(): void {
     this.squeakHeld = true;
     this.clearSqueakMinTimer();
-    // 松手宽限期内又按下 = 同一次长按，直接撤销这次“假松开”，计时与声音都不重来
-    if (this.squeakReleaseTimer !== null) {
-      this.clearSqueakReleaseTimer();
-      if (this.squeakSource || this.squeakArmTimer !== null) return;
-    }
     if (!this.enabled) return;
     if (!this.ensureContext()) return;
     const ctx = this.ctx as AudioContext;
@@ -104,7 +93,6 @@ class CatAudio {
       this.notifySqueak(true);
       return;
     }
-    // 已经进入长按倒计时：不要重置，避免“短按一次 + 长按一次”的错觉
     if (this.squeakArmTimer !== null) return;
     this.squeakArmTimer = window.setTimeout(() => {
       this.squeakArmTimer = null;
@@ -113,18 +101,8 @@ class CatAudio {
     }, SQUEAK_HOLD_DELAY_MS);
   }
 
-  /** 松开鼠标：先等一个极短的宽限期，确认真的松开了再收尾 */
+  /** 松开鼠标：不足 2 秒的话把剩下的叫完再停，超过 2 秒立刻淡出 */
   public stopSqueak(): void {
-    if (!this.squeakHeld) return;
-    if (this.squeakReleaseTimer !== null) return;
-    this.squeakReleaseTimer = window.setTimeout(() => {
-      this.squeakReleaseTimer = null;
-      this.commitRelease();
-    }, SQUEAK_RELEASE_GRACE_MS);
-  }
-
-  /** 宽限期结束（确实松手了）：不足 2 秒的话把剩下的叫完再停，超过 2 秒立刻淡出 */
-  private commitRelease(): void {
     this.squeakHeld = false;
     this.clearSqueakArmTimer();
     if (!this.squeakSource) return;
@@ -153,7 +131,6 @@ class CatAudio {
     this.squeakHeld = false;
     this.clearSqueakArmTimer();
     this.clearSqueakMinTimer();
-    this.clearSqueakReleaseTimer();
     this.fadeOutSqueak();
   }
 
@@ -168,13 +145,6 @@ class CatAudio {
     if (this.squeakMinTimer !== null) {
       window.clearTimeout(this.squeakMinTimer);
       this.squeakMinTimer = null;
-    }
-  }
-
-  private clearSqueakReleaseTimer(): void {
-    if (this.squeakReleaseTimer !== null) {
-      window.clearTimeout(this.squeakReleaseTimer);
-      this.squeakReleaseTimer = null;
     }
   }
 
@@ -226,11 +196,6 @@ class CatAudio {
     this.squeakSource = src;
     this.squeakStartedAt = performance.now();
     gain.gain.setTargetAtTime(this.squeakTarget(), ctx.currentTime, 0.045);
-    if (!this.squeakHeld) {
-      // 加载音频的瞬间刚好松开了：按最少播放时长收尾，不要凭空冒出一声
-      this.commitRelease();
-      return;
-    }
     this.notifySqueak(true);
   }
 

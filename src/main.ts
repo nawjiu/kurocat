@@ -23,6 +23,9 @@ import type { CollarColorId, KuroCatEngine3D } from './catEngine3d';
 type DesktopRenderMode = '2d' | '3d';
 type HeadphoneMode = 'auto' | 'on' | 'off';
 
+/** 按键抬起的防抖窗口（毫秒）：给误报的 KeyUp 一次被键盘自动重复救回来的机会 */
+const KEY_UP_DEBOUNCE_MS = 150;
+
 interface AppSettings {
   x: number | null;
   y: number | null;
@@ -187,7 +190,7 @@ const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanEl
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const engine = new KuroCatEngine(canvas);
 
-// 哼唧开始/结束 → 眼睛跟着变妩媚（2D 与 3D 引擎共用同一份回调）
+// 哼唧开始/结束 → 眼睛跟着亮起水光高光（2D 与 3D 引擎共用同一份回调）
 catAudio.onSqueakChange((active) => {
   engine.setSqueakCharm(active);
   engine3d?.setSqueakCharm(active);
@@ -1058,10 +1061,35 @@ async function bootstrap(): Promise<void> {
     if (preset) applyTailPreset(preset);
   });
 
+  // 长按判定（键盘）：输入钩子偶尔会误报一次 KeyUp（提权窗口、独占全屏游戏、安全桌面前台等），
+  // 只要漏进一次，猫咪就会把一次真实长按演成「先短按一下、再长按」。
+  // 这里把 KeyUp 延后 ~150ms 再派发：
+  //   · 期间来了这颗键的自动重复（repeat=true）→ 说明还按着，撤销这次抬起；
+  //   · 期间来了一个新的按下（repeat=false）→ 先把挂起的抬起兑现，再按新的一次处理。
+  const pendingKeyUps = new Map<number, number>();
+  const dispatchKeyUp = (vk: number) => {
+    if (active3d || tailPickerOpen) engine3d?.onKeyUp(vk);
+    if (!active3d) engine.onKeyUp(vk);
+  };
+  const takePendingKeyUp = (vk: number): boolean => {
+    const timer = pendingKeyUps.get(vk);
+    if (timer === undefined) return false;
+    window.clearTimeout(timer);
+    pendingKeyUps.delete(vk);
+    return true;
+  };
+
   await listen<InputEvent>('kuro-input', (ev) => {
     const p = ev.payload;
     switch (p.kind) {
       case 'keyDown':
+        if (p.repeat) {
+          // 键盘自动重复说明这颗键其实还按着：上一次「抬起」是误报，撤销它
+          takePendingKeyUp(p.vk);
+        } else if (takePendingKeyUp(p.vk)) {
+          // 真的又按了一次：先把上一次的抬起兑现掉，再演一次新的按下
+          dispatchKeyUp(p.vk);
+        }
         if (tailPickerOpen) {
           if (!p.repeat) {
             const spec = resolveKeyByVk(p.vk, settings.keyboardLayout);
@@ -1075,10 +1103,14 @@ async function bootstrap(): Promise<void> {
         else engine.onKeyDown(p.vk, p.repeat);
         break;
       case 'keyUp':
-        if (active3d || tailPickerOpen) engine3d?.onKeyUp(p.vk);
-        if (!active3d) {
-          engine.onKeyUp(p.vk);
-        }
+        if (pendingKeyUps.has(p.vk)) break;
+        pendingKeyUps.set(
+          p.vk,
+          window.setTimeout(() => {
+            pendingKeyUps.delete(p.vk);
+            dispatchKeyUp(p.vk);
+          }, KEY_UP_DEBOUNCE_MS),
+        );
         break;
       case 'mouseMove': {
         // 猫视角鼠标反转：两个轴同时镜像，猫猫就像坐在桌子对面回头看人一样反应。

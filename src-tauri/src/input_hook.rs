@@ -139,6 +139,8 @@ pub fn set_hooks_paused(paused: bool) {
 struct KeyDeduplicator {
     logical_pressed: [bool; 512],
     last_down: [Option<(Instant, KeySource)>; 512],
+    /// 每颗键连续几次外部查询（GetAsyncKeyState）都报告「已抬起」——用于避免一次误报就拆断长按
+    up_confirm: [u8; 512],
 }
 
 impl KeyDeduplicator {
@@ -146,7 +148,20 @@ impl KeyDeduplicator {
         Self {
             logical_pressed: [false; 512],
             last_down: [None; 512],
+            up_confirm: [0; 512],
         }
+    }
+
+    /// 记录一次「外部查询显示已抬起」，达到 `needed` 次才认账。
+    /// GetAsyncKeyState 在提权窗口、独占全屏游戏、安全桌面前台时偶尔会误报「已抬起」，
+    /// 单次误报就会把一次真实长按拆成「短按一下 + 再长按」。
+    fn confirm_up(&mut self, vk: u32, needed: u8) -> bool {
+        let idx = vk as usize;
+        if idx >= 512 {
+            return true;
+        }
+        self.up_confirm[idx] = self.up_confirm[idx].saturating_add(1);
+        self.up_confirm[idx] >= needed
     }
 
     /// Returns `Some(repeat)` if a `KeyDown` should be emitted, or `None` if suppressed
@@ -163,6 +178,7 @@ impl KeyDeduplicator {
                     return None;
                 }
             }
+            self.up_confirm[idx] = 0;
             return Some(true);
         }
         // Guard against micro-tap race: channel A delivered Down+Up, then channel B delivers
@@ -173,6 +189,7 @@ impl KeyDeduplicator {
             }
         }
         self.logical_pressed[idx] = true;
+        self.up_confirm[idx] = 0;
         self.last_down[idx] = Some((now, source));
         Some(false)
     }
@@ -187,6 +204,7 @@ impl KeyDeduplicator {
             return false;
         }
         self.logical_pressed[idx] = false;
+        self.up_confirm[idx] = 0;
         true
     }
 }
@@ -459,7 +477,22 @@ pub fn start_global_hooks(app: AppHandle) {
                     let physically_down =
                         unsafe { (GetAsyncKeyState(os_vk) as u16 & 0x8000) != 0 };
                     if !physically_down {
+                        // 键盘自动重复会不断刷新 last_down，只有真的松手才会安静下来。
+                        // 所以先要求这颗键已经有一段时间没有任何 KeyDown 了……
+                        let quiet = dedup.last_down[vk]
+                            .map(|(at, _)| at.elapsed())
+                            .unwrap_or(Duration::from_secs(60));
+                        if quiet < Duration::from_millis(700) {
+                            dedup.up_confirm[vk] = 0;
+                            continue;
+                        }
+                        // ……再要求连续两次外部查询都报告抬起（≈900ms），才认这一次「抬起」。
+                        // 单次误报不能拆断长按，否则猫咪会先演一个短按、再演长按。
+                        if !dedup.confirm_up(vk as u32, 2) {
+                            continue;
+                        }
                         dedup.logical_pressed[vk] = false;
+                        dedup.up_confirm[vk] = 0;
                         if is_alt_vk(vk as u32) {
                             ALT_HELD.store(false, Ordering::Relaxed);
                         }
@@ -470,6 +503,8 @@ pub fn start_global_hooks(app: AppHandle) {
                                 scan: 0,
                             },
                         );
+                    } else {
+                        dedup.up_confirm[vk] = 0;
                     }
                 }
             };

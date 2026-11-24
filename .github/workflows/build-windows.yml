@@ -8,7 +8,7 @@ on:
       release_tag:
         description: 'Release tag / label for the published installers'
         type: string
-        default: 'v5.1.0-kuro98.6'
+        default: 'v5.1.0-kuro98.7'
       publish_release:
         description: 'Create (or update) a GitHub Release with the installers'
         type: boolean
@@ -52,7 +52,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
           $tag = "${{ inputs.release_tag }}"
-          if (-not $tag) { $tag = 'v5.1.0-kuro98.6' }
+          if (-not $tag) { $tag = 'v5.1.0-kuro98.7' }
           Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | ForEach-Object {
             Copy-Item $_.FullName "out/KuroCat-$tag-x64-setup.exe"
           }
@@ -83,7 +83,7 @@ jobs:
             - 「呼噜声常驻」：设置窗口与托盘右键菜单都能开关，勾选状态双向同步
             - 呼噜音量滑块（0%–150%，点击数值复位）：常驻底噪与摸头呼噜共用同一路音量
             - 左键按住小猫 1 秒后开始哼唧，至少叫满 2 秒；哼唧音量跟随呼噜音量滑块
-            - 长按判定修复：哼唧样本重剪成连续三声的无缝循环，再也不会听成「先短叫一声、再长叫一声」；松手判定加 260ms 宽限，鼠标抖动不会把一次长按拆成两次
-            - 哼唧时小猫变成媚眼：半眯 + 外眼角上扬 + 细眼线 + 水光高光 + 加深的腮红（2D / 3D 两套渲染都有）
+            - 键盘长按修复：输入钩子误报的一次「抬起」不再把长按拆成「先短按一下、再长按」——按键抬起加了 150ms 防抖（自动重复会撤销这次误报），后端每 450ms 的按键状态校正改成「静默 700ms + 连续两次确认」才认抬起，自动重复还会顺手把键帽扶回按下状态
+            - 被按住时的表情：改成小猫自带的那双有高光的眼睛（2D / 3D 都一样），不再自己画半眯眼线
           draft: false
           files: out/*
