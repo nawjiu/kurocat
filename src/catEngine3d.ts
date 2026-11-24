@@ -323,6 +323,7 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uPupilRad: { value: new THREE.Vector2(0.43, 0.67) },
       uCross: { value: 0 },
       uCurious: { value: 0 },
+      uCharm: { value: 0 },
       uShineAmt: { value: 0 },
       uIs3D: { value: 1 },
       uLimbalAmt: { value: 0.28 },
@@ -353,6 +354,7 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uniform vec2 uPupilRad;
       uniform float uCross;
       uniform float uCurious;
+      uniform float uCharm;
       uniform float uShineAmt;
       uniform float uIs3D;
       uniform float uLimbalAmt;
@@ -382,6 +384,14 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
           lidAlpha = 1.0 - smoothstep(lashH - aa, lashH + aa, lidDist);
           lashMask = smoothstep(-aa, aa, lidDist);
           lidShadow = smoothstep(-0.24, 0.0, lidDist) * 0.25 * uCross;
+        } else if (uCharm > 0.01) {
+          // 哼唧媚眼：上眼睑压下来一大半 + 外眼角微微上扬，边缘做柔和过渡（不切硬边）
+          float lidY = mix(1.30, 0.45, uCharm) + uSide * p.x * 0.16 * uCharm;
+          float lashH = 0.050 + 0.060 * uCharm;
+          float lidDist = p.y - lidY;
+          lidAlpha *= 1.0 - smoothstep(lashH - 0.070, lashH + 0.020, lidDist);
+          lashMask = max(lashMask, (1.0 - smoothstep(lashH - 0.070, lashH + 0.010, lidDist)) * 0.78 * uCharm);
+          lidShadow = max(lidShadow, smoothstep(-0.24, 0.0, lidDist) * 0.20 * uCharm);
         }
 
         // Luminous glass-cabochon iris gradient
@@ -719,6 +729,9 @@ export class KuroCatEngine3D {
   private petX = 0;
   private rub = 0;
   private squintAmt = 0;
+  // 哼唧时的「媚眼」靠 shader 做半眯 + 外眼角上扬，0..1 平滑过渡
+  private squeakCharm = 0;
+  private squeakCharmTarget = 0;
   private asleep = false;
   private sleepAmt = 0;
   private wakeAt = -100;
@@ -1632,6 +1645,14 @@ export class KuroCatEngine3D {
     };
   }
 
+  /** 哼唧时让眼睛妩媚一点（半眯 + 外眼角上扬） */
+  public setSqueakCharm(active: boolean): void {
+    const next = active ? 1 : 0;
+    if (this.squeakCharmTarget === next) return;
+    this.squeakCharmTarget = next;
+    this.wakeRendering();
+  }
+
   public setPrivacyMode(active: boolean): void {
     this.privacyMode = active;
     if (active) {
@@ -2289,20 +2310,33 @@ export class KuroCatEngine3D {
     const isBlinkClosed = !isSleepOrPrivacy && !isPetSquint && blinkClose > 0.58;
     const showOpenEye = !isSleepOrPrivacy && !isPetSquint && !isBlinkClosed;
 
-    this.blushMat.opacity += ((petActive ? 0.46 : 0) - this.blushMat.opacity) * approach(8, dt);
-    if (this.blushMat.opacity < 0.004 && !petActive) this.blushMat.opacity = 0;
+    // 哼唧媚眼：睡着、眯眼、眨眼、生气时自动退场
+    this.squeakCharm += (this.squeakCharmTarget - this.squeakCharm) * approach(7, dt);
+    const charmAmt = clamp(
+      this.squeakCharm * (1 - Math.max(blinkClose, this.privacyClose, this.sleepAmt)) * (1 - cross),
+      0,
+      1,
+    );
+
+    const blushWant = Math.max(petActive ? 0.46 : 0, charmAmt * 0.52);
+    this.blushMat.opacity += (blushWant - this.blushMat.opacity) * approach(8, dt);
+    if (this.blushMat.opacity < 0.004 && blushWant <= 0) this.blushMat.opacity = 0;
     const showBlush = this.blushMat.opacity > 0.004;
     catAudio.setPurrIntensity(petActive ? 0.85 : 0);
 
     const pal = this.currentPalette;
     // Match original KuroCat 2D: Black Cat shows NO permanent catchlights when calm, sparkling catchlights when Curious!
-    const shineAmt = pal?.eyeCatchlight ? 1.0 + curious * 0.20 : Math.min(1.16, curious * 1.25);
+    // 哼唧时也补一点水光，半眯的眼睛才有媚气
+    const shineAmt = pal?.eyeCatchlight
+      ? 1.0 + Math.max(curious * 0.20, charmAmt * 0.12)
+      : Math.min(1.16, Math.max(curious * 1.25, charmAmt * 0.95));
 
     for (const e of this.eyes) {
       e.blush.visible = showBlush;
       e.mesh.visible = showOpenEye;
       e.closedArc.visible = isSleepOrPrivacy || isBlinkClosed;
       e.squintSlit.visible = isPetSquint;
+      e.mat.uniforms.uCharm.value = charmAmt;
 
       if (showOpenEye) {
         const irisRx = 0.156 * (1 + curious * 0.06);

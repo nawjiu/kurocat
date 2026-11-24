@@ -270,6 +270,17 @@ export class KuroCatEngine {
   private lastMouseNX = 0.5;
   private lastDt = 1 / 60;
 
+  // 哼唧时的「媚眼」：半眯 + 外眼角上扬，0..1 平滑过渡
+  private squeakCharm = 0;
+  private squeakCharmTarget = 0;
+
+  public setSqueakCharm(active: boolean): void {
+    const next = active ? 1 : 0;
+    if (this.squeakCharmTarget === next) return;
+    this.squeakCharmTarget = next;
+    this.wakeRendering();
+  }
+
   public setPrivacyMode(active: boolean): void {
     this.wakeRendering();
     this.privacyMode = active;
@@ -1916,6 +1927,7 @@ export class KuroCatEngine {
     this.lastDt = dt;
     const wantSquint = this.petEnergy > 0.3 && !this.isCross ? 1 : 0;
     this.squintAmount += (wantSquint - this.squintAmount) * (1 - Math.exp(-12 * dt));
+    this.squeakCharm += (this.squeakCharmTarget - this.squeakCharm) * (1 - Math.exp(-7 * dt));
     const wantPrivacy = this.privacyMode ? 1 : 0;
     this.privacyClose += (wantPrivacy - this.privacyClose) * (1 - Math.exp(-14 * dt));
     catAudio.setPurrIntensity(
@@ -3022,8 +3034,9 @@ export class KuroCatEngine {
 
     // 4) Ragdoll rosy petting blush + adorable tiny pink nose & gentle kitten smile!
     if (isRagdoll) {
-      if (this.squintAmount > 0.12) {
-        ctx.fillStyle = `rgba(244, 146, 166, ${(0.42 * this.squintAmount).toFixed(3)})`;
+      const blushAmt = Math.max(this.squintAmount, this.squeakCharm * 0.9);
+      if (blushAmt > 0.12) {
+        ctx.fillStyle = `rgba(244, 146, 166, ${(0.42 * blushAmt).toFixed(3)})`;
         ctx.beginPath();
         ctx.ellipse(wShift - 30, 13, 8.5, 4.6, -0.08, 0, Math.PI * 2);
         ctx.ellipse(wShift + 30, 13, 8.5, 4.6, 0.08, 0, Math.PI * 2);
@@ -3280,6 +3293,16 @@ export class KuroCatEngine {
     const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount);
     const curious = Math.min(1, this.curiousAmount);
     const cross = this.crossAmount;
+    // 哼唧媚眼：眨眼/眯眼/睡着/生气时自动收起来，只剩温柔的半眯
+    const charm = Math.max(
+      0,
+      Math.min(
+        1,
+        this.squeakCharm *
+          (1 - Math.max(blinkVal, this.privacyClose, this.sleepAmount)) *
+          (1 - Math.min(1, cross)),
+      ),
+    );
 
     // Exact measured eye spacing & size from original 0.3s & 10.6s!
     const eyeXs = [cx - 23.0, cx + 23.0];
@@ -3344,12 +3367,28 @@ export class KuroCatEngine {
       const leftDrop = idx === 0 ? outerDrop : innerDrop;
       const rightDrop = idx === 0 ? innerDrop : outerDrop;
 
+      // 哼唧媚眼：上眼睑压下来一大半、外眼角微微上扬，慵懒又撩人
+      const hasCharmLid = charm > 0.04 && !hasGrumpyLid && openRy > 2.2;
+      const charmBase = -openRy + openRy * 0.55 * charm;
+      const charmSlant = (idx === 0 ? -1 : 1) * openRy * 0.16 * charm;
+      const charmLeft = charmBase + charmSlant;
+      const charmRight = charmBase - charmSlant;
+      const charmMid = (charmLeft + charmRight) * 0.5 - openRy * 0.08 * charm;
+
       // Clip the eye cleanly below the slanted grumpy eyelid so underlying fur / bicolor masks show through seamlessly!
       ctx.save();
       if (hasGrumpyLid) {
         ctx.beginPath();
         ctx.moveTo(-rx - 4, leftDrop);
         ctx.lineTo(rx + 4, rightDrop);
+        ctx.lineTo(rx + 4, openRy + 4);
+        ctx.lineTo(-rx - 4, openRy + 4);
+        ctx.closePath();
+        ctx.clip();
+      } else if (hasCharmLid) {
+        ctx.beginPath();
+        ctx.moveTo(-rx - 4, charmLeft);
+        ctx.quadraticCurveTo(0, charmMid, rx + 4, charmRight);
         ctx.lineTo(rx + 4, openRy + 4);
         ctx.lineTo(-rx - 4, openRy + 4);
         ctx.closePath();
@@ -3389,9 +3428,9 @@ export class KuroCatEngine {
         ctx.ellipse(px, py, pupilRx, pupilRy, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        if (isRagdoll || curious > 0.25) {
+        if (isRagdoll || curious > 0.25 || charm > 0.2) {
           // Crisp glossy starlight catchlights (always on Ragdoll, plus sparkles on Black Cat when curious!)
-          const ca = isRagdoll ? 0.94 : Math.min(0.92, curious * 0.95);
+          const ca = isRagdoll ? 0.94 : Math.min(0.95, Math.max(curious * 0.95, charm * 0.9));
           ctx.fillStyle = `rgba(255, 255, 255, ${ca.toFixed(2)})`;
           ctx.beginPath();
           ctx.arc(px - 3.6 - curious * 0.8, py - 4.0 - curious * 0.5, 2.5 + curious * 0.7, 0, Math.PI * 2);
@@ -3416,6 +3455,23 @@ export class KuroCatEngine {
       }
 
       ctx.restore(); // end grumpy eyelid clip
+
+      if (hasCharmLid) {
+        // 贴在上眼睑内侧的一道细眼线（半眯时睫毛根部的暗影）
+        const lashIn = 1.2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, openRy, 0, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.strokeStyle = isRagdoll ? 'rgba(34, 40, 56, 0.9)' : 'rgba(26, 30, 18, 0.88)';
+        ctx.lineWidth = 1.8 + charm * 0.7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-rx - 1, charmLeft + lashIn);
+        ctx.quadraticCurveTo(0, charmMid + lashIn, rx + 1, charmRight + lashIn);
+        ctx.stroke();
+        ctx.restore();
+      }
 
       if (hasGrumpyLid && isRagdoll && openRy > 2.2) {
         ctx.save();
@@ -4826,6 +4882,16 @@ export class KuroCatEngine {
     const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount);
     const curious = Math.min(1, this.curiousAmount);
     const cross = this.crossAmount;
+    // 哼唧媚眼：眨眼/眯眼/睡着/生气时自动收起来，只剩温柔的半眯
+    const charm = Math.max(
+      0,
+      Math.min(
+        1,
+        this.squeakCharm *
+          (1 - Math.max(blinkVal, this.privacyClose, this.sleepAmount)) *
+          (1 - Math.min(1, cross)),
+      ),
+    );
     const eyeXs = [cx - 23.0, cx + 23.0];
     const rx = (14.8 + this.typingHunch * 1.0) * (1 + curious * 0.06);
     const ry = (13.4 - this.typingHunch * 0.5) * (1 + curious * 0.09);
@@ -4877,12 +4943,28 @@ export class KuroCatEngine {
       const leftDrop = idx === 0 ? outerDrop : innerDrop;
       const rightDrop = idx === 0 ? innerDrop : outerDrop;
 
+      // 哼唧媚眼：上眼睑压下来一大半、外眼角微微上扬
+      const hasCharmLid = charm > 0.04 && !hasGrumpyLid && openRy > 2.2;
+      const charmBase = -openRy + openRy * 0.55 * charm;
+      const charmSlant = (idx === 0 ? -1 : 1) * openRy * 0.16 * charm;
+      const charmLeft = charmBase + charmSlant;
+      const charmRight = charmBase - charmSlant;
+      const charmMid = (charmLeft + charmRight) * 0.5 - openRy * 0.08 * charm;
+
       // Clip the eye cleanly below the slanted grumpy eyelid so bicolor masks, tabby stripes & spots stay 100% seamless!
       ctx.save();
       if (hasGrumpyLid) {
         ctx.beginPath();
         ctx.moveTo(-rx - 4, leftDrop);
         ctx.lineTo(rx + 4, rightDrop);
+        ctx.lineTo(rx + 4, openRy + 4);
+        ctx.lineTo(-rx - 4, openRy + 4);
+        ctx.closePath();
+        ctx.clip();
+      } else if (hasCharmLid) {
+        ctx.beginPath();
+        ctx.moveTo(-rx - 4, charmLeft);
+        ctx.quadraticCurveTo(0, charmMid, rx + 4, charmRight);
         ctx.lineTo(rx + 4, openRy + 4);
         ctx.lineTo(-rx - 4, openRy + 4);
         ctx.closePath();
@@ -4911,8 +4993,8 @@ export class KuroCatEngine {
         ctx.ellipse(px, py, pupilRx, pupilRy, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        if (s.eyeCatchlight || curious > 0.25) {
-          const ca = s.eyeCatchlight ? 0.94 : Math.min(0.92, curious * 0.95);
+        if (s.eyeCatchlight || curious > 0.25 || charm > 0.2) {
+          const ca = s.eyeCatchlight ? 0.94 : Math.min(0.95, Math.max(curious * 0.95, charm * 0.9));
           ctx.fillStyle = `rgba(255, 255, 255, ${ca.toFixed(2)})`;
           ctx.beginPath();
           ctx.arc(px - 3.6 - curious * 0.8, py - 4.0 - curious * 0.5, 2.5 + curious * 0.7, 0, Math.PI * 2);
@@ -4934,6 +5016,23 @@ export class KuroCatEngine {
       }
 
       ctx.restore(); // end grumpy eyelid clip
+
+      if (hasCharmLid) {
+        // 贴在上眼睑内侧的一道细眼线（半眯时睫毛根部的暗影）
+        const lashIn = 1.2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, openRy, 0, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.strokeStyle = s.squintColor;
+        ctx.lineWidth = 1.8 + charm * 0.7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-rx - 1, charmLeft + lashIn);
+        ctx.quadraticCurveTo(0, charmMid + lashIn, rx + 1, charmRight + lashIn);
+        ctx.stroke();
+        ctx.restore();
+      }
 
       if (hasGrumpyLid && s.eyeRimColor && openRy > 2.2) {
         ctx.save();

@@ -187,6 +187,14 @@ const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanEl
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const engine = new KuroCatEngine(canvas);
 
+// 哼唧开始/结束 → 眼睛跟着变妩媚（2D 与 3D 引擎共用同一份回调）
+catAudio.onSqueakChange((active) => {
+  engine.setSqueakCharm(active);
+  engine3d?.setSqueakCharm(active);
+});
+// 提前解码两段样本，第一次长按/摸头不出声不拖拍
+catAudio.preload();
+
 // Lazy-loaded Three.js 3D engine (NEVER imported when user stays in 2D mode -> +0 MB overhead!)
 let engine3d: KuroCatEngine3D | null = null;
 let loading3dPromise: Promise<void> | null = null;
@@ -248,6 +256,7 @@ function syncEngine3DState(): void {
   engine3d.setKeyboardConfig(kbLayout, kbOrient);
   engine3d.setTailKeyConfig(tailMode, tailIds);
   engine3d.setPrivacyMode(privacyActive);
+  engine3d.setSqueakCharm(catAudio.isSqueaking());
   engine3d.resize();
 }
 
