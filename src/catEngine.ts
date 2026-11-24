@@ -1228,7 +1228,9 @@ export class KuroCatEngine {
         chosen = this.rightPaw;
       } else {
         this.lastSpacePaw = this.lastSpacePaw === 'left' ? 'right' : 'left';
-        chosen = this.lastSpacePaw === 'left' ? this.leftPaw : this.rightPaw;
+        const side = this.pickFreePawSide(this.lastSpacePaw, spec.id);
+        this.lastSpacePaw = side;
+        chosen = side === 'left' ? this.leftPaw : this.rightPaw;
       }
       const spaceU = isCatFacing
         ? chosen.side === 'left'
@@ -1241,10 +1243,11 @@ export class KuroCatEngine {
       targetPoint = this.projectKeyboardPoint(spaceU, rY + 0.50);
     } else if (activelyMousing) {
       chosen = this.rightPaw;
-    } else if (screenKeyCol < splitCol) {
-      chosen = this.leftPaw;
     } else {
-      chosen = this.rightPaw;
+      // 左右两半默认分给左右两只爪；但如果那只爪正按着另一颗键还没松手、而另一只爪空着，
+      // 就把新按下的键交给另一只爪 —— 按住 D 再按 A 时是两只爪分头按，而不是同一只爪从 D 挪到 A。
+      const side = this.pickFreePawSide(screenKeyCol < splitCol ? 'left' : 'right', spec.id);
+      chosen = side === 'left' ? this.leftPaw : this.rightPaw;
     }
 
     const sideSign = chosen.side === 'left' ? -1 : 1;
@@ -2149,6 +2152,21 @@ export class KuroCatEngine {
       }
     }
     return best;
+  }
+
+  /**
+   * 选哪只爪子去按新键。默认按「左半边左爪、右半边右爪」，
+   * 但那只爪要是正按着另一颗键（长按没松手）、而另一只爪空着，就换另一只爪上，
+   * 这样「按住 D 再按 A」是两只爪分头按住两颗键，而不是同一只爪从 D 挪到 A。
+   */
+  private pickFreePawSide(preferred: 'left' | 'right', specId: string): 'left' | 'right' {
+    const other: 'left' | 'right' = preferred === 'left' ? 'right' : 'left';
+    const ownKey = this.latestHeldKeyFor(preferred);
+    const otherKey = this.latestHeldKeyFor(other);
+    // 这颗键本来就是另一只爪在按着（重复/误报），继续用它
+    if (otherKey && otherKey.specId === specId) return other;
+    if (ownKey && ownKey.specId !== specId && !otherKey) return other;
+    return preferred;
   }
 
   private updatePaw(paw: PawState, dt: number, now: number): void {

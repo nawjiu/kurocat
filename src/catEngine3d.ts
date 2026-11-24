@@ -1749,14 +1749,33 @@ export class KuroCatEngine3D {
     }
 
     const mousingNow = this.isMousing();
-    const isLeftSideScreen = k.x < 0.05;
-    const pawKey: 'L' | 'R' = mousingNow ? 'R' : isLeftSideScreen ? 'L' : 'R';
+    const keyWorld = this.desk.keyTopWorld(k.spec.id, this.tmpV1);
+    let pawKey: 'L' | 'R';
+    if (mousingNow) {
+      pawKey = 'R';
+    } else {
+      // 左右两半默认分给左右两只爪；但那只爪要是正按着别的键还没松手、而另一只爪空着，
+      // 就换另一只爪 —— 按住 D 再按 A 是两只爪分头按住两颗键，而不是同一只爪从 D 挪到 A。
+      const preferred: 'L' | 'R' = k.x < 0.05 ? 'L' : 'R';
+      pawKey = preferred;
+      const other: 'L' | 'R' = preferred === 'L' ? 'R' : 'L';
+      const busyKeyOf = (side: 'L' | 'R'): string | null => {
+        const p = this.paws[side];
+        return p.down && p.keyId ? p.keyId : null;
+      };
+      const ownKey = busyKeyOf(preferred);
+      const otherKey = busyKeyOf(other);
+      if (otherKey === k.spec.id) {
+        pawKey = other;
+      } else if (ownKey && ownKey !== k.spec.id && !otherKey) {
+        pawKey = other;
+      }
+    }
     const paw = this.paws[pawKey];
     paw.from.copy(paw.pos);
     paw.keyId = k.spec.id;
     paw.t0 = this.elapsed;
     paw.lastActive = this.elapsed;
-    const keyWorld = this.desk.keyTopWorld(k.spec.id, this.tmpV1);
     paw.dur = clamp(paw.pos.distanceTo(keyWorld) * 0.085, 0.048, 0.095);
     paw.down = true;
     this.desk.setKeyDown(k.spec.id, true);
