@@ -1,5 +1,9 @@
 # 🐈‍⬛ KuroCat — Open-Source Desktop Typing Cat Pet · 桌面打字小黑猫伴侣
 
+> **🍴 个人 fork —— 基于官方 `v5.0.2`，只额外加了一个功能：鼠标反转（猫视角）**
+> 右键菜单 / 托盘菜单里可开关：开启后猫猫按「坐在桌子对面回头看你」的视角理解鼠标，左右与上下同时镜像。默认关闭，代码其余部分与官方 `v5.0.2` 一致。
+> 带此功能的 Windows 安装包：[**本仓库 Releases**](https://github.com/nawjiu/kurocat/releases/latest)。文中其余下载链接与截图均来自上游官方项目。
+
 <p align="center">
   <strong>🇨🇳 简体中文</strong> &nbsp;|&nbsp;
   <a href="./README.en.md">🇺🇸 English</a> &nbsp;|&nbsp;
@@ -47,6 +51,10 @@
 </table>
 
 ## 📥 直接下载使用（Windows / Win7 / macOS / Linux）
+
+> **🍴 本仓库是个人 fork（基于官方 `v5.0.2`），只多了一个「鼠标反转（猫视角）」开关。**
+> 👉 **带此功能的 Windows 安装包**：[**`nawjiu/kurocat` Releases**](https://github.com/nawjiu/kurocat/releases/latest) —— 下方链接均为原作者官方包（不含此功能）。
+> ⚠️ App 内「检查更新」仍指向官方仓库：点更新会装回官方版，反转选项随之消失，需要再从 fork Releases 覆盖安装一次。
 
 前往 [Releases](https://github.com/qianyiai/kurocat/releases) 页面或直接点击下方最新 **`v5.0.2`** 安装包下载（全新搭载 **✨ 3D 体积光影手办模式 & 🎨 2D 经典手绘双引擎一键切换（默认 3D）**、**2D/3D 短萌手臂与毛色过渡优化**、**可选 3D 项圈铃铛与电竞耳机（支持游戏自动检测静默戴上/摘下，默认均关闭）**、**MCP AI 捏猫斑点 3D/2D 1:1 同步**、**28s 防 1px 微抖动打瞌睡**、**屏幕最顶端无阻自由拖动**、**尾巴拍键 4 模式 + 键盘点选录制**、**独立侧边不挡猫右键菜单**、**内置 OBS 透明直播源（`127.0.0.1:27421/obs` 免抠像）**、**20%–150% 丝滑缩放**、**65% / 108 键** 与 **输密码自动闭眼防偷窥** 及 App 内一键自升级）：
 

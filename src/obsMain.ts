@@ -23,6 +23,7 @@ interface ObsAppSettings {
   renderMode?: ObsRenderMode;
   collarColor?: CollarColorId;
   headphoneMode?: ObsHeadphoneMode;
+  mouseInvert?: boolean;
 }
 
 type InputEvent =
@@ -100,6 +101,7 @@ let currentSettings: ObsAppSettings = {
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
+  mouseInvert: false,
 };
 
 function computeObsHeadphonesOn(activeCat: CatSkinConfig | undefined): boolean {
@@ -222,15 +224,18 @@ function handleInput(p: InputEvent): void {
       if (active3d && engine3d) engine3d.onKeyUp(p.vk);
       else engine.onKeyUp(p.vk);
       break;
-    case 'mouseMove':
+    case 'mouseMove': {
+      const nx = currentSettings.mouseInvert === true ? 1 - p.nx : p.nx;
+      const ny = currentSettings.mouseInvert === true ? 1 - p.ny : p.ny;
       if (active3d && engine3d) {
-        engine3d.onGlobalMouseMove(p.nx, p.ny);
-        engine3d.onWindowCursor(p.nx, p.ny, false);
+        engine3d.onGlobalMouseMove(nx, ny);
+        engine3d.onWindowCursor(nx, ny, false);
       } else {
-        engine.onGlobalMouseMove(p.nx, p.ny);
-        engine.onWindowCursor(p.nx, p.ny, false);
+        engine.onGlobalMouseMove(nx, ny);
+        engine.onWindowCursor(nx, ny, false);
       }
       break;
+    }
     case 'mouseDown':
       if (active3d && engine3d) engine3d.onMouseDown(p.button);
       else engine.onMouseDown(p.button);

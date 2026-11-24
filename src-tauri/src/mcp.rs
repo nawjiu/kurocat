@@ -143,7 +143,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_settings",
-            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|108, keyboardOrientation cat|viewer, tailKeyMode smart|custom|edge|off, tailKeyIds string[], autostart).",
+            "description": "Update KuroCat desktop pet settings live (scale 0.2-1.5, showKeyBubbles, soundEnabled, alwaysOnTop, clickThroughLocked, catBreed, keyboardLayout 65|108, keyboardOrientation cat|viewer, tailKeyMode smart|custom|edge|off, tailKeyIds string[], autostart, mouseInvert cat-view mirror).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -151,6 +151,7 @@ fn tool_definitions() -> Value {
                     "renderMode": { "type": "string", "enum": ["2d", "3d"], "description": "Visual engine mode: '2d' (classic 2D Canvas) or '3d' (Three.js 3D volumetric lighting)." },
                     "collarColor": { "type": "string", "enum": ["none", "red", "blue", "pink", "green"], "description": "Optional 3D collar & gold bell color in 3D mode." },
                     "headphoneMode": { "type": "string", "enum": ["auto", "on", "off"], "description": "Gaming headset mode: 'auto' (automatically wears headphones when a PC game is active), 'on' (always on), or 'off'." },
+                    "mouseInvert": { "type": "boolean", "description": "Cat-view mirror: the pet reacts to the mouse as if it were on the opposite side of the desk (both axes flipped)." },
                     "scale": { "type": "number", "minimum": 0.2, "maximum": 1.5 },
                     "keyboardLayout": { "type": "string", "enum": ["65", "108"] },
                     "keyboardOrientation": { "type": "string", "enum": ["cat", "viewer"] },
@@ -296,6 +297,9 @@ fn execute_tool(name: &str, args: &Value, on_change: &dyn Fn()) -> Value {
             }
             if let Some(hm) = args.get("headphoneMode").and_then(|v| v.as_str()) {
                 s.headphone_mode = crate::config::normalize_headphone_mode(hm);
+            }
+            if let Some(b) = args.get("mouseInvert").and_then(|v| v.as_bool()) {
+                s.mouse_invert = b;
             }
             if let Some(layout) = args.get("keyboardLayout").and_then(|v| v.as_str()) {
                 s.keyboard_layout = crate::config::normalize_keyboard_layout(layout);

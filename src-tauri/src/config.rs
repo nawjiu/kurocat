@@ -68,6 +68,12 @@ pub fn normalize_headphone_mode(raw: &str) -> String {
     }
 }
 
+/// Cat-view mirror: the pet reacts to the mouse as if it were sitting on the other side of the
+/// desk and looking back at the user. Off by default so it stays an opt-in prank.
+pub fn default_mouse_invert() -> bool {
+    false
+}
+
 pub fn default_keyboard_layout() -> String {
     if cfg!(feature = "layout-108") {
         "108".to_string()
@@ -183,6 +189,8 @@ pub struct AppSettings {
     pub collar_color: String,
     #[serde(default = "default_headphone_mode")]
     pub headphone_mode: String,
+    #[serde(default = "default_mouse_invert")]
+    pub mouse_invert: bool,
 }
 
 impl Default for AppSettings {
@@ -214,6 +222,7 @@ impl Default for AppSettings {
             render_mode: default_render_mode(),
             collar_color: default_collar_color(),
             headphone_mode: default_headphone_mode(),
+            mouse_invert: default_mouse_invert(),
         }
     }
 }

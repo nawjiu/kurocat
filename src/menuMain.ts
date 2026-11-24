@@ -28,6 +28,7 @@ interface AppSettings {
   renderMode?: '2d' | '3d';
   collarColor?: 'none' | 'red' | 'blue' | 'pink' | 'green';
   headphoneMode?: 'auto' | 'on' | 'off';
+  mouseInvert?: boolean;
 }
 
 interface UpdateInfo {
@@ -73,6 +74,7 @@ let settings: AppSettings = {
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
+  mouseInvert: false,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
@@ -133,6 +135,7 @@ function syncUI(): void {
   setCheck('chk-top', settings.alwaysOnTop);
   setCheck('chk-autostart', settings.autostart);
   setCheck('chk-mcp', settings.mcpEnabled);
+  setCheck('chk-mouse-invert', settings.mouseInvert === true);
   setCheck('chk-obs', Boolean(settings.obsEnabled));
   setCheck('chk-obs-hide', Boolean(settings.obsEnabled && settings.obsHidePet));
 
@@ -469,6 +472,9 @@ async function bootstrap(): Promise<void> {
         break;
       case 'toggle-autostart':
         void applySettingsPatch({ autostart: !settings.autostart });
+        break;
+      case 'toggle-mouse-invert':
+        void applySettingsPatch({ mouseInvert: settings.mouseInvert !== true });
         break;
       case 'toggle-obs': {
         const nextObs = !settings.obsEnabled;

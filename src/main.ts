@@ -45,6 +45,7 @@ interface AppSettings {
   renderMode?: DesktopRenderMode;
   collarColor?: CollarColorId;
   headphoneMode?: HeadphoneMode;
+  mouseInvert?: boolean;
 }
 
 type InputEvent =
@@ -126,6 +127,7 @@ let settings: AppSettings = {
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
+  mouseInvert: false,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
@@ -301,6 +303,7 @@ function syncMenuUI(): void {
   setCheck('chk-top', settings.alwaysOnTop);
   setCheck('chk-autostart', settings.autostart);
   setCheck('chk-mcp', settings.mcpEnabled);
+  setCheck('chk-mouse-invert', settings.mouseInvert === true);
 
   if (!sliderDragging) {
     updateScaleSliderVisual(settings.scale);
@@ -907,10 +910,16 @@ async function bootstrap(): Promise<void> {
           engine.onKeyUp(p.vk);
         }
         break;
-      case 'mouseMove':
-        if (active3d && engine3d) engine3d.onGlobalMouseMove(p.nx, p.ny);
-        else engine.onGlobalMouseMove(p.nx, p.ny);
+      case 'mouseMove': {
+        // Cat-view mirror: flip both axes so the pet reacts as if it sat on the far side of the
+        // desk and looked back at the user. Speeds/distances are unaffected (it is a mirror),
+        // so pointer-speed sampling and sleep timers behave exactly as before.
+        const nx = settings.mouseInvert === true ? 1 - p.nx : p.nx;
+        const ny = settings.mouseInvert === true ? 1 - p.ny : p.ny;
+        if (active3d && engine3d) engine3d.onGlobalMouseMove(nx, ny);
+        else engine.onGlobalMouseMove(nx, ny);
         break;
+      }
       case 'mouseDown':
         if (active3d && engine3d) engine3d.onMouseDown(p.button);
         else engine.onMouseDown(p.button);
@@ -1124,6 +1133,9 @@ async function bootstrap(): Promise<void> {
         break;
       case 'toggle-mcp':
         void applySettingsPatch({ mcpEnabled: !settings.mcpEnabled });
+        break;
+      case 'toggle-mouse-invert':
+        void applySettingsPatch({ mouseInvert: settings.mouseInvert !== true });
         break;
       case 'copy-mcp':
         void copyMcpConfig();
