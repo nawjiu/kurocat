@@ -225,11 +225,16 @@ export const KEYBOARD_KEYS_108: KeySpec[] = [
   { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM_X + 2, uWidth: 1, vkCodes: [0x6e] },
 ];
 
-// Authentic 98-key (980) layout: full-size numpad kept, dedicated nav cluster removed, arrow keys
-// squeezed into the bottom-right corner of the typing block (inverted-T), and a narrow 3-key
-// Del/Ins/PgUp strip filling the column between the typing block and the numpad.
-// Occupies 20.35U x 6.25 rows => 13 + 19 + 19 + 17 + 18 + 12 = 98 keys!
+// Authentic 98-key (980) layout, matched to the real GMK-style 98 board:
+//   * full-size numpad kept (4 columns, NumLock / / * - on top, + and NumEnter 2U tall);
+//   * no separate nav column — Insert/Home/PgUp/PgDn live on the F row above the numpad;
+//   * Delete sits right after F12, Backspace keeps its 2U width;
+//   * arrow cluster is an inverted-T sitting in the seam: ← ↓ → on the bottom row with → right
+//     UNDER the numpad "1", and ↑ stacked above ↓;
+//   * numpad bottom row shifts right by one column (0 under 2, . Del under 3).
+// Occupies 20.35U x 6.25 rows => 18 + 18 + 18 + 16 + 17 + 12 = 99 keys!
 const NUM98_X = 16.35;
+/** F-row Delete slot (right after F12, above Backspace). */
 const EDIT98_X = 15;
 
 export const KEYBOARD_KEYS_98: KeySpec[] = [
@@ -247,8 +252,13 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'f10', label: 'F10', bubble: 'F10', row: 0, rowY: 0, uStart: 12, uWidth: 1, vkCodes: [0x79] },
   { id: 'f11', label: 'F11', bubble: 'F11', row: 0, rowY: 0, uStart: 13, uWidth: 1, vkCodes: [0x7a] },
   { id: 'f12', label: 'F12', bubble: 'F12', row: 0, rowY: 0, uStart: 14, uWidth: 1, vkCodes: [0x7b] },
+  { id: 'del', label: 'Del', bubble: 'Del', row: 0, rowY: 0, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2e] },
+  { id: 'ins', label: 'Ins', bubble: 'Ins', row: 0, rowY: 0, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2d] },
+  { id: 'home', label: 'Hm', bubble: 'Home', row: 0, rowY: 0, uStart: NUM98_X + 1, uWidth: 1, accent: 'mod', vkCodes: [0x24] },
+  { id: 'pgup', label: 'PU', bubble: 'PgUp', row: 0, rowY: 0, uStart: NUM98_X + 2, uWidth: 1, accent: 'mod', vkCodes: [0x21] },
+  { id: 'pgdn', label: 'PD', bubble: 'PgDn', row: 0, rowY: 0, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x22] },
 
-  // Row 1 (rowY=1.25): ` 1..0 - = Backspace(2U) | Del | Num / * - (19 keys)
+  // Row 1 (rowY=1.25): ` 1..0 - = Backspace(2U) | Num / * - (18 keys)
   { id: 'grave', label: '`', bubble: '`', row: 1, rowY: 1.25, uStart: 0, uWidth: 1, vkCodes: [0xc0] },
   { id: '1', label: '1', bubble: '1', row: 1, rowY: 1.25, uStart: 1, uWidth: 1, vkCodes: [0x31] },
   { id: '2', label: '2', bubble: '2', row: 1, rowY: 1.25, uStart: 2, uWidth: 1, vkCodes: [0x32] },
@@ -263,13 +273,12 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'minus', label: '-', bubble: '-', row: 1, rowY: 1.25, uStart: 11, uWidth: 1, vkCodes: [0xbd] },
   { id: 'equal', label: '=', bubble: '=', row: 1, rowY: 1.25, uStart: 12, uWidth: 1, vkCodes: [0xbb] },
   { id: 'bs', label: '⌫', bubble: '⌫', row: 1, rowY: 1.25, uStart: 13, uWidth: 2, accent: 'mod', vkCodes: [0x08] },
-  { id: 'del', label: 'Del', bubble: 'Del', row: 1, rowY: 1.25, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2e] },
   { id: 'numlk', label: 'Num', bubble: 'Num', row: 1, rowY: 1.25, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x90] },
   { id: 'np_div', label: '/', bubble: 'Num/', row: 1, rowY: 1.25, uStart: NUM98_X + 1, uWidth: 1, accent: 'mod', vkCodes: [0x6f] },
   { id: 'np_mul', label: '*', bubble: 'Num*', row: 1, rowY: 1.25, uStart: NUM98_X + 2, uWidth: 1, accent: 'mod', vkCodes: [0x6a] },
   { id: 'np_sub', label: '-', bubble: 'Num-', row: 1, rowY: 1.25, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x6d] },
 
-  // Row 2 (rowY=2.25): Tab Q..P [ ] \(1.5U) | Ins | 7 8 9 +(2U tall) (19 keys)
+  // Row 2 (rowY=2.25): Tab Q..P [ ] \(1.5U) | 7 8 9 +(2U tall) (18 keys)
   { id: 'tab', label: '↹', bubble: 'Tab', row: 2, rowY: 2.25, uStart: 0, uWidth: 1.5, accent: 'mod', vkCodes: [0x09] },
   { id: 'q', label: 'Q', bubble: 'Q', row: 2, rowY: 2.25, uStart: 1.5, uWidth: 1, vkCodes: [0x51] },
   { id: 'w', label: 'W', bubble: 'W', row: 2, rowY: 2.25, uStart: 2.5, uWidth: 1, vkCodes: [0x57] },
@@ -284,13 +293,12 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'lb', label: '[', bubble: '[', row: 2, rowY: 2.25, uStart: 11.5, uWidth: 1, vkCodes: [0xdb] },
   { id: 'rb', label: ']', bubble: ']', row: 2, rowY: 2.25, uStart: 12.5, uWidth: 1, vkCodes: [0xdd] },
   { id: 'bslash', label: '\\', bubble: '\\', row: 2, rowY: 2.25, uStart: 13.5, uWidth: 1.5, accent: 'mod', vkCodes: [0xdc] },
-  { id: 'ins', label: 'Ins', bubble: 'Ins', row: 2, rowY: 2.25, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x2d] },
   { id: 'np_7', label: '7', bubble: 'Num7', row: 2, rowY: 2.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x67] },
   { id: 'np_8', label: '8', bubble: 'Num8', row: 2, rowY: 2.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x68] },
   { id: 'np_9', label: '9', bubble: 'Num9', row: 2, rowY: 2.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x69] },
   { id: 'np_add', label: '+', bubble: 'Num+', row: 2, rowY: 2.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'mod', vkCodes: [0x6b] },
 
-  // Row 3 (rowY=3.25): Caps A..L ; ' Enter(2.25U) | PgUp | 4 5 6 (17 keys)
+  // Row 3 (rowY=3.25): Caps A..L ; ' Enter(2.25U) | 4 5 6 (16 keys)
   { id: 'caps', label: '⇪', bubble: 'Caps', row: 3, rowY: 3.25, uStart: 0, uWidth: 1.75, accent: 'mod', vkCodes: [0x14] },
   { id: 'a', label: 'A', bubble: 'A', row: 3, rowY: 3.25, uStart: 1.75, uWidth: 1, vkCodes: [0x41] },
   { id: 's', label: 'S', bubble: 'S', row: 3, rowY: 3.25, uStart: 2.75, uWidth: 1, vkCodes: [0x53] },
@@ -304,12 +312,11 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'semi', label: ';', bubble: ';', row: 3, rowY: 3.25, uStart: 10.75, uWidth: 1, vkCodes: [0xba] },
   { id: 'quote', label: "'", bubble: "'", row: 3, rowY: 3.25, uStart: 11.75, uWidth: 1, vkCodes: [0xde] },
   { id: 'enter', label: '↵', bubble: '↵', row: 3, rowY: 3.25, uStart: 12.75, uWidth: 2.25, accent: 'mod', vkCodes: [0x0d] },
-  { id: 'pgup', label: 'PU', bubble: 'PgUp', row: 3, rowY: 3.25, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x21] },
   { id: 'np_4', label: '4', bubble: 'Num4', row: 3, rowY: 3.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x64] },
   { id: 'np_5', label: '5', bubble: 'Num5', row: 3, rowY: 3.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x65] },
   { id: 'np_6', label: '6', bubble: 'Num6', row: 3, rowY: 3.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x66] },
 
-  // Row 4 (rowY=4.25): LShift Z..M , . / RShift(1.75U) | Up | 1 2 3 NumEnter(2U tall, orange) (18 keys)
+  // Row 4 (rowY=4.25): LShift Z..M , . / RShift(1.75U) | ↑ | 1 2 3 NumEnter(2U tall, orange) (17 keys)
   { id: 'lshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 0, uWidth: 2.25, accent: 'mod', vkCodes: [0xa0, 0x10] },
   { id: 'z', label: 'Z', bubble: 'Z', row: 4, rowY: 4.25, uStart: 2.25, uWidth: 1, vkCodes: [0x5a] },
   { id: 'x', label: 'X', bubble: 'X', row: 4, rowY: 4.25, uStart: 3.25, uWidth: 1, vkCodes: [0x58] },
@@ -322,14 +329,13 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'dot', label: '.', bubble: '.', row: 4, rowY: 4.25, uStart: 10.25, uWidth: 1, vkCodes: [0xbe] },
   { id: 'slash', label: '/', bubble: '/', row: 4, rowY: 4.25, uStart: 11.25, uWidth: 1, vkCodes: [0xbf] },
   { id: 'rshift', label: '⇧', bubble: '⇧', row: 4, rowY: 4.25, uStart: 12.25, uWidth: 1.75, accent: 'orange', vkCodes: [0xa1] },
-  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: 14, uWidth: 1, accent: 'mod', vkCodes: [0x26] },
+  { id: 'up', label: '↑', bubble: '↑', row: 4, rowY: 4.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'mod', vkCodes: [0x26] },
   { id: 'np_1', label: '1', bubble: 'Num1', row: 4, rowY: 4.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x61] },
   { id: 'np_2', label: '2', bubble: 'Num2', row: 4, rowY: 4.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x62] },
   { id: 'np_3', label: '3', bubble: 'Num3', row: 4, rowY: 4.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x63] },
   { id: 'np_ent', label: '↵', bubble: 'Num↵', row: 4, rowY: 4.25, rowSpan: 2, uStart: NUM98_X + 3, uWidth: 1, accent: 'orange', vkCodes: [VK_NUMPAD_ENTER] },
-  { id: 'pgdn', label: 'PD', bubble: 'PgDn', row: 4, rowY: 4.25, uStart: EDIT98_X, uWidth: 1, accent: 'mod', vkCodes: [0x22] },
 
-  // Row 5 (rowY=5.25): Ctrl Win Alt Space(6.25U) Alt Fn Ctrl + Left Down Right | 0 . (12 keys)
+  // Row 5 (rowY=5.25): Ctrl Win Alt Space(6.25U) Alt Fn Ctrl | ← ↓ → 0 . (12 keys)
   { id: 'lctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 0, uWidth: 1.25, accent: 'mod', vkCodes: [0xa2, 0x11] },
   { id: 'lwin', label: 'Win', bubble: 'Win', row: 5, rowY: 5.25, uStart: 1.25, uWidth: 1.25, accent: 'mod', vkCodes: [0x5b] },
   { id: 'lalt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 2.5, uWidth: 1.25, accent: 'mod', vkCodes: [0xa4, 0x12] },
@@ -337,11 +343,13 @@ export const KEYBOARD_KEYS_98: KeySpec[] = [
   { id: 'ralt', label: 'Alt', bubble: 'Alt', row: 5, rowY: 5.25, uStart: 10, uWidth: 1, accent: 'mod', vkCodes: [0xa5] },
   { id: 'fn', label: 'Fn', bubble: 'Fn', row: 5, rowY: 5.25, uStart: 11, uWidth: 1, accent: 'mod', vkCodes: [] },
   { id: 'rctrl', label: 'Ctrl', bubble: 'Ctrl', row: 5, rowY: 5.25, uStart: 12, uWidth: 1, accent: 'mod', vkCodes: [0xa3] },
-  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: 13, uWidth: 1, accent: 'mod', vkCodes: [0x25] },
-  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: 14, uWidth: 1, accent: 'mod', vkCodes: [0x28] },
-  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: 15, uWidth: 1, accent: 'mod', vkCodes: [0x27] },
-  { id: 'np_0', label: '0', bubble: 'Num0', row: 5, rowY: 5.25, uStart: NUM98_X, uWidth: 1, vkCodes: [0x60] },
-  { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x6e] },
+  { id: 'left', label: '←', bubble: '←', row: 5, rowY: 5.25, uStart: NUM98_X - 2, uWidth: 1, accent: 'mod', vkCodes: [0x25] },
+  { id: 'down', label: '↓', bubble: '↓', row: 5, rowY: 5.25, uStart: NUM98_X - 1, uWidth: 1, accent: 'mod', vkCodes: [0x28] },
+  // → 正好在数字区 1 的正下方（真机排布）
+  { id: 'right', label: '→', bubble: '→', row: 5, rowY: 5.25, uStart: NUM98_X, uWidth: 1, accent: 'mod', vkCodes: [0x27] },
+  // 0 与 . Del 跟在 → 右边，分别落在 2、3 的下方
+  { id: 'np_0', label: '0', bubble: 'Num0', row: 5, rowY: 5.25, uStart: NUM98_X + 1, uWidth: 1, vkCodes: [0x60] },
+  { id: 'np_dot', label: '.', bubble: 'Num.', row: 5, rowY: 5.25, uStart: NUM98_X + 2, uWidth: 1, vkCodes: [0x6e] },
 ];
 
 export const KEYBOARD_KEYS = KEYBOARD_KEYS_65;
