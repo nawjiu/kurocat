@@ -119,6 +119,8 @@ let toastAutoHideTimer: number | null = null;
 let sliderDragging = false;
 let purrSliderDragging = false;
 let altOverride = false;
+// 指针是否落在猫身上（左键按住时用来触发哼唧）
+let cursorOverCatNow = false;
 let lastKnownLockState: boolean | null = null;
 let syncWin7OverlayFn: ((focusMenu?: boolean) => void) | null = null;
 let tailPickerOpen = false;
@@ -1081,10 +1083,14 @@ async function bootstrap(): Promise<void> {
       case 'mouseDown':
         if (active3d && engine3d) engine3d.onMouseDown(p.button);
         else engine.onMouseDown(p.button);
+        // 左键按住小猫：小猫开始哼唧
+        if (p.button === 'left' && cursorOverCatNow) catAudio.startSqueak();
         break;
       case 'mouseUp':
         if (active3d && engine3d) engine3d.onMouseUp(p.button);
         else engine.onMouseUp(p.button);
+        // 松开就停
+        if (p.button === 'left') catAudio.stopSqueak();
         break;
       case 'mouseWheel':
         if (active3d && engine3d) engine3d.onMouseWheel();
@@ -1127,6 +1133,8 @@ async function bootstrap(): Promise<void> {
   await listen<WindowCursorInfo>('kuro-cursor', (ev) => {
     const c = ev.payload;
     altOverride = Boolean(c.altOverride);
+    // 记住指针是否落在猫身上，左键按下时用它判断要不要哼唧
+    cursorOverCatNow = Boolean(c.overCat);
     if (active3d && engine3d) engine3d.onWindowCursor(c.relX, c.relY, c.overCat);
     else engine.onWindowCursor(c.relX, c.relY, c.overCat);
     const interactive = !settings.clickThroughLocked || altOverride;

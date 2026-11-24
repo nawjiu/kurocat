@@ -3,6 +3,7 @@
 //   1) 抚摸结束约 2 秒后呼噜声自然停止（保留一点点尾巴，不硬切）
 //   2) 「呼噜声常驻」开关：开着的时候猫猫平时就小声呼噜，摸头时再变响
 import purrSampleUrl from './assets/purr.mp3?url';
+import squeakSampleUrl from './assets/squeak.mp3?url';
 
 /** 松开抚摸后还要继续呼噜多久（毫秒） */
 const RELEASE_TAIL_MS = 2000;
@@ -10,6 +11,8 @@ const RELEASE_TAIL_MS = 2000;
 const ALWAYS_ON_LEVEL = 0.32;
 /** 主输出增益上限，避免样本本身偏响时破音 */
 const MAX_GAIN = 0.42;
+/** 按住小猫时的哼唧音量（0-1，独立于呼噜音量滑块） */
+const SQUEAK_LEVEL = 0.72;
 
 class CatAudio {
   private ctx: AudioContext | null = null;
@@ -26,6 +29,11 @@ class CatAudio {
   private petIntensity = 0;
   private appliedLevel = 0;
   private stopTimer: number | null = null;
+  private squeakBuffer: AudioBuffer | null = null;
+  private squeakLoading: Promise<AudioBuffer | null> | null = null;
+  private squeakSource: AudioBufferSourceNode | null = null;
+  private squeakGain: GainNode | null = null;
+  private squeakHeld = false;
 
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
@@ -33,9 +41,94 @@ class CatAudio {
       this.petIntensity = 0;
       this.rampTo(0, 0.06);
       this.scheduleStop(120);
+      this.stopSqueak();
     } else {
       this.applyLevel();
     }
+  }
+
+  /** 按住小猫：开始哼唧（循环播放，松开前一直叫） */
+  public startSqueak(): void {
+    this.squeakHeld = true;
+    if (!this.enabled) return;
+    if (!this.ensureContext()) return;
+    const ctx = this.ctx as AudioContext;
+    if (ctx.state === 'suspended') {
+      void ctx.resume().catch(() => {});
+    }
+    if (this.squeakSource) {
+      if (this.squeakGain) {
+        this.squeakGain.gain.setTargetAtTime(SQUEAK_LEVEL, ctx.currentTime, 0.04);
+      }
+      return;
+    }
+    void this.playSqueakLoop();
+  }
+
+  /** 松开鼠标：哼唧立刻衰减停下 */
+  public stopSqueak(): void {
+    this.squeakHeld = false;
+    const ctx = this.ctx;
+    const src = this.squeakSource;
+    const gain = this.squeakGain;
+    this.squeakSource = null;
+    this.squeakGain = null;
+    if (!ctx || !src) return;
+    if (gain) {
+      gain.gain.cancelScheduledValues(ctx.currentTime);
+      gain.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+    }
+    window.setTimeout(() => {
+      try {
+        src.stop();
+      } catch {
+        // already stopped
+      }
+    }, 240);
+  }
+
+  private async playSqueakLoop(): Promise<void> {
+    const buf = await this.loadSqueak();
+    if (!buf || !this.squeakHeld || !this.enabled) return;
+    const ctx = this.ctx;
+    if (!ctx || this.squeakSource) return;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    try {
+      src.start();
+    } catch {
+      return;
+    }
+    this.squeakGain = gain;
+    this.squeakSource = src;
+    gain.gain.setTargetAtTime(SQUEAK_LEVEL, ctx.currentTime, 0.045);
+  }
+
+  private loadSqueak(): Promise<AudioBuffer | null> {
+    if (this.squeakBuffer) return Promise.resolve(this.squeakBuffer);
+    if (this.squeakLoading) return this.squeakLoading;
+    const ctx = this.ctx;
+    if (!ctx) return Promise.resolve(null);
+    this.squeakLoading = fetch(squeakSampleUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`squeak sample ${res.status}`);
+        return res.arrayBuffer();
+      })
+      .then((raw) => ctx.decodeAudioData(raw))
+      .then((buf) => {
+        this.squeakBuffer = buf;
+        return buf;
+      })
+      .catch(() => null)
+      .finally(() => {
+        this.squeakLoading = null;
+      });
+    return this.squeakLoading;
   }
 
   /** 呼噜声常驻：不摸也一直在小声呼噜 */
