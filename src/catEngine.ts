@@ -73,6 +73,8 @@ interface PawState {
   pokeTime: number;
   impactSquash: number;
   lastActiveAt: number;
+  /** 抓着鼠标时快速升到 1：手掌直接贴在鼠标上，和鼠标一起走，不再多一层延迟 */
+  mouseGrip: number;
   smears: SmearFrame[];
 }
 
@@ -814,7 +816,7 @@ export class KuroCatEngine {
   private lastSpacePaw: 'left' | 'right' = 'left';
   private heldKeys = new Map<
     number,
-    { side: 'left' | 'right'; specId: string; x: number; y: number; at: number }
+    { side: 'left' | 'right'; specId: string; x: number; y: number; at: number; start: number }
   >();
   private catTailHeldAt = new Map<number, number>();
 
@@ -852,6 +854,7 @@ export class KuroCatEngine {
       pokeTime: 1,
       impactSquash: 0,
       lastActiveAt: -10000,
+      mouseGrip: 0,
       smears: [],
     };
 
@@ -868,6 +871,7 @@ export class KuroCatEngine {
       pokeTime: 1,
       impactSquash: 0,
       lastActiveAt: -10000,
+      mouseGrip: 0,
       smears: [],
     };
 
@@ -1228,7 +1232,7 @@ export class KuroCatEngine {
         chosen = this.rightPaw;
       } else {
         this.lastSpacePaw = this.lastSpacePaw === 'left' ? 'right' : 'left';
-        const side = this.pickFreePawSide(this.lastSpacePaw, spec.id);
+        const side = this.pickFreePawSide(this.lastSpacePaw, spec.id, now);
         this.lastSpacePaw = side;
         chosen = side === 'left' ? this.leftPaw : this.rightPaw;
       }
@@ -1246,7 +1250,7 @@ export class KuroCatEngine {
     } else {
       // 左右两半默认分给左右两只爪；但如果那只爪正按着另一颗键还没松手、而另一只爪空着，
       // 就把新按下的键交给另一只爪 —— 按住 D 再按 A 时是两只爪分头按，而不是同一只爪从 D 挪到 A。
-      const side = this.pickFreePawSide(screenKeyCol < splitCol ? 'left' : 'right', spec.id);
+      const side = this.pickFreePawSide(screenKeyCol < splitCol ? 'left' : 'right', spec.id, now);
       chosen = side === 'left' ? this.leftPaw : this.rightPaw;
     }
 
@@ -1287,6 +1291,8 @@ export class KuroCatEngine {
       x: clampedTarget.x,
       y: clampedTarget.y,
       at: now,
+      // 真正的按下时刻（自动重复只刷新 at，不动 start），用来判断哪颗键是「长按锚点」
+      start: this.heldKeys.get(vk)?.start ?? now,
     });
 
     const other = chosen.side === 'left' ? this.rightPaw : this.leftPaw;
@@ -2143,9 +2149,15 @@ export class KuroCatEngine {
 
   private latestHeldKeyFor(
     side: 'left' | 'right',
-  ): { side: 'left' | 'right'; specId: string; x: number; y: number; at: number } | null {
-    let best: { side: 'left' | 'right'; specId: string; x: number; y: number; at: number } | null =
-      null;
+  ): { side: 'left' | 'right'; specId: string; x: number; y: number; at: number; start: number } | null {
+    let best: {
+      side: 'left' | 'right';
+      specId: string;
+      x: number;
+      y: number;
+      at: number;
+      start: number;
+    } | null = null;
     for (const entry of this.heldKeys.values()) {
       if (entry.side === side && (!best || entry.at >= best.at)) {
         best = entry;
@@ -2155,18 +2167,22 @@ export class KuroCatEngine {
   }
 
   /**
-   * 选哪只爪子去按新键。默认按「左半边左爪、右半边右爪」，
-   * 但那只爪要是正按着另一颗键（长按没松手）、而另一只爪空着，就换另一只爪上，
-   * 这样「按住 D 再按 A」是两只爪分头按住两颗键，而不是同一只爪从 D 挪到 A。
+   * 选哪只爪子去按新键。
+   * 默认按「左半边左爪、右半边右爪」；那只爪正按着别的键（还没松手）时，把新键交给另一只爪。
+   * 两只爪都在按着键的时候，保住「按得最久」的那颗（长按的锚点键），新键交给按住时间最短的那只爪 ——
+   * 于是按住 D 时另一只爪可以一直交替点 A / S / 空格，D 始终留在原来那只爪下面。
    */
-  private pickFreePawSide(preferred: 'left' | 'right', specId: string): 'left' | 'right' {
+  private pickFreePawSide(preferred: 'left' | 'right', specId: string, now: number): 'left' | 'right' {
     const other: 'left' | 'right' = preferred === 'left' ? 'right' : 'left';
     const ownKey = this.latestHeldKeyFor(preferred);
     const otherKey = this.latestHeldKeyFor(other);
-    // 这颗键本来就是另一只爪在按着（重复/误报），继续用它
+    // 这颗键本来就是某只爪在按着（重复 / 误报），继续用它，不要来回横跳
     if (otherKey && otherKey.specId === specId) return other;
-    if (ownKey && ownKey.specId !== specId && !otherKey) return other;
-    return preferred;
+    if (ownKey && ownKey.specId === specId) return preferred;
+    if (!ownKey) return preferred;
+    if (!otherKey) return other;
+    // 两只爪都按着键：谁按得更久谁就是锚点，新键交给另一只（按得较新的）爪
+    return now - ownKey.start >= now - otherKey.start ? other : preferred;
   }
 
   private updatePaw(paw: PawState, dt: number, now: number): void {
@@ -2240,6 +2256,15 @@ export class KuroCatEngine {
     const follow = 1 - Math.exp(-followRate * dt);
     paw.pos.x += (paw.target.x - paw.pos.x) * follow;
     paw.pos.y += (paw.target.y - paw.pos.y) * follow;
+    // 抓着鼠标时，手掌和鼠标是同一件东西：贴着鼠标走，不再叠一层缓动（否则鼠标先动、手才跟上）。
+    // mouseGrip 用极快的斜坡升到 1，进入「抓鼠标」的瞬间不会硬跳一下。
+    if (paw.mode === 'mouse') {
+      paw.mouseGrip = Math.min(1, paw.mouseGrip + dt * 18);
+      paw.pos.x += (paw.target.x - paw.pos.x) * paw.mouseGrip;
+      paw.pos.y += (paw.target.y - paw.pos.y) * paw.mouseGrip;
+    } else {
+      paw.mouseGrip = 0;
+    }
     paw.vel.x = 0;
     paw.vel.y = 0;
 

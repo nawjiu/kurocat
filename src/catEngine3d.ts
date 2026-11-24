@@ -49,6 +49,8 @@ interface PawTrack3D {
   down: boolean;
   lastActive: number;
   tuckWeight: number;
+  /** 抓着鼠标时快速升到 1：手掌贴在鼠标上跟它一起走，不再叠一层弹簧延迟 */
+  mouseGrip: number;
 }
 
 interface Popup3D {
@@ -1115,6 +1117,7 @@ export class KuroCatEngine3D {
         down: false,
         lastActive: -100,
         tuckWeight: 1,
+        mouseGrip: 0,
       };
     };
     this.paws = { L: mkTrack(-1), R: mkTrack(1) };
@@ -1754,21 +1757,28 @@ export class KuroCatEngine3D {
     if (mousingNow) {
       pawKey = 'R';
     } else {
-      // 左右两半默认分给左右两只爪；但那只爪要是正按着别的键还没松手、而另一只爪空着，
-      // 就换另一只爪 —— 按住 D 再按 A 是两只爪分头按住两颗键，而不是同一只爪从 D 挪到 A。
+      // 左右两半默认分给左右两只爪；那只爪正按着别的键（还没松手）时，新键交给另一只爪。
+      // 两只爪都按着键时，保住「按得最久」的那颗（长按锚点），新键交给按住时间最短的爪 ——
+      // 于是按住 D 时另一只爪可以一直交替点 A / S / 空格，D 始终留在原来那只爪下面。
       const preferred: 'L' | 'R' = k.x < 0.05 ? 'L' : 'R';
-      pawKey = preferred;
       const other: 'L' | 'R' = preferred === 'L' ? 'R' : 'L';
-      const busyKeyOf = (side: 'L' | 'R'): string | null => {
+      const busyPaw = (side: 'L' | 'R'): PawTrack3D | null => {
         const p = this.paws[side];
-        return p.down && p.keyId ? p.keyId : null;
+        return p.down && p.keyId ? p : null;
       };
-      const ownKey = busyKeyOf(preferred);
-      const otherKey = busyKeyOf(other);
-      if (otherKey === k.spec.id) {
+      const ownPaw = busyPaw(preferred);
+      const otherPaw = busyPaw(other);
+      if (otherPaw && otherPaw.keyId === k.spec.id) {
         pawKey = other;
-      } else if (ownKey && ownKey !== k.spec.id && !otherKey) {
+      } else if (ownPaw && ownPaw.keyId === k.spec.id) {
+        pawKey = preferred;
+      } else if (!ownPaw) {
+        pawKey = preferred;
+      } else if (!otherPaw) {
         pawKey = other;
+      } else {
+        // 两只爪都在按键：ownPaw 按得更早 = 锚点，那就把新键交给另一只
+        pawKey = ownPaw.t0 <= otherPaw.t0 ? other : preferred;
       }
     }
     const paw = this.paws[pawKey];
@@ -2457,13 +2467,20 @@ export class KuroCatEngine3D {
       const activeForKey = Boolean(paw.keyId && (paw.down || t - paw.t0 < 0.52)) && !this.asleep && !this.privacyMode;
       const wantTuck = !activeForMouse && !activeForKey ? 1 : 0;
       paw.tuckWeight += (wantTuck - paw.tuckWeight) * approach(wantTuck ? 6.5 : 22, dt);
+      if (!activeForMouse) paw.mouseGrip = 0;
 
       this.tmpPawLocal.set(paw.side * 0.24, 0.16 - this.sleepAmt * 0.06, 0.54);
       const tuckHome = this.attachLocal(this.tmpPawLocal, this.tmpV3);
 
       if (activeForMouse) {
+        // 手掌和鼠标是一体的：先用弹簧靠过去做入场过渡，再用 mouseGrip 吃掉残余误差。
+        // 抓稳之后手掌位置就等于鼠标位置，两者同步移动 —— 不会再「鼠标先动、手才慢慢跟上」。
         const mt = this.desk.mouseTopWorld(this.tmpV1);
+        paw.mouseGrip = Math.min(1, paw.mouseGrip + dt * 18);
         paw.pos.copy(paw.spring.step(mt, dt));
+        paw.pos.lerp(mt, paw.mouseGrip);
+        paw.spring.x.copy(paw.pos);
+        paw.spring.v.set(0, 0, 0);
         paw.last.copy(paw.pos);
         return;
       }
