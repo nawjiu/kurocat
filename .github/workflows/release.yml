@@ -1,9 +1,11 @@
 name: Build Cross-Platform Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # 这是上游的全平台发布流水线：只有上游官方仓库带 macOS 签名密钥 / 各平台环境的 secrets。
+  # fork 里打 tag 时别跟着跑（会全线失败、还会往同一个 Release 里塞半成品），需要时手动触发。
+  # push:
+  #   tags:
+  #     - 'v*'
   workflow_dispatch:
     inputs:
       linux_only:
