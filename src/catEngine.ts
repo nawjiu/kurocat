@@ -45,6 +45,16 @@ export const TAIL_KEY_PRESETS = {
 
 const EDGE_PROTECTED_WASD_IDS = new Set(['q', 'w', 'e', 'a', 's', 'd', 'z', 'x', 'c', 'space']);
 
+/**
+ * 一次「点按」在爪子上最少停留的时间（秒）。
+ * 只用来保证极快的轻点也能看出「爪子砸下去了」；只要超过这个值，手一松就立刻抬爪。
+ * 以前这里是 0.13 秒的固定停留，打字稍快（每键 <130ms）时两次击键之间根本没有抬手的机会，
+ * 看起来就是爪子一直粘在键帽上。
+ */
+const PAW_MIN_POKE_SECONDS = 0.035;
+/** 按住时 pokeTime 的上限：略小于上面的阈值，松手后下一帧就开始收爪 */
+const PAW_HOLD_POKE_CAP = 0.03;
+
 interface Vec2 {
   x: number;
   y: number;
@@ -835,6 +845,8 @@ export class KuroCatEngine {
     { side: 'left' | 'right'; specId: string; x: number; y: number; at: number; start: number }
   >();
   private catTailHeldAt = new Map<number, number>();
+  /** 每颗键上一次是被哪只爪按下去的 —— 用来在钩子误报「抬起」之后把爪子扶回去 */
+  private lastPawKeySide = new Map<number, 'left' | 'right'>();
 
   // Keys & bubbles
   private keyAnims = new Map<string, KeyAnim>();
@@ -1210,6 +1222,9 @@ export class KuroCatEngine {
       if (held) held.at = now;
       if (this.catTail.heldVks.has(vk)) {
         this.catTailHeldAt.set(vk, now);
+      } else if (!held) {
+        // 这颗键还在自动重复 = 它一直按着，之前那次「抬起」是钩子误报，爪子已经收回去 —— 扶回来
+        this.restoreHeldKeySilently(vk, spec, now);
       }
       return;
     }
@@ -1374,8 +1389,12 @@ export class KuroCatEngine {
 
     if (chosen.mode === 'curled' || chosen.mode === 'idle') {
       const startPt = this.getLiveCurledPawPos(chosen, 0);
-      chosen.pos = { x: startPt.x, y: startPt.y };
-      chosen.vel = { x: 0, y: 0 };
+      // 只有已经落到收爪位附近才做这个「对齐」（防止长期漂移）；
+      // 正在收爪的途中按下一颗键时，直接从当前位置出发 —— 否则爪子会瞬移回怀里再飞向键帽。
+      if (Math.hypot(chosen.pos.x - startPt.x, chosen.pos.y - startPt.y) < 6) {
+        chosen.pos = { x: startPt.x, y: startPt.y };
+        chosen.vel = { x: 0, y: 0 };
+      }
     }
     const clampedTarget = this.clampToKeyboardSurface(targetPoint);
     chosen.mode = 'poke';
@@ -1392,6 +1411,7 @@ export class KuroCatEngine {
       // 真正的按下时刻（自动重复只刷新 at，不动 start），用来判断哪颗键是「长按锚点」
       start: this.heldKeys.get(vk)?.start ?? now,
     });
+    this.lastPawKeySide.set(vk, chosen.side);
 
     const other = chosen.side === 'left' ? this.rightPaw : this.leftPaw;
     if (other.mode === 'idle' && !activelyMousing) {
@@ -1409,6 +1429,10 @@ export class KuroCatEngine {
 
   public onKeyUp(vk: number): void {
     this.dafeiyu.onKeyUp(vk);
+    // 记住这颗键是谁按的：万一这次「抬起」是误报，后面的自动重复还要把爪子扶回来
+    const wasHeldByPaw = this.heldKeys.get(vk);
+    if (wasHeldByPaw) this.lastPawKeySide.set(vk, wasHeldByPaw.side);
+    else this.lastPawKeySide.delete(vk);
     this.heldKeys.delete(vk);
     if (this.catTail.heldVks.has(vk)) {
       this.catTail.heldVks.delete(vk);
@@ -2266,6 +2290,33 @@ export class KuroCatEngine {
     }
   }
 
+  /**
+   * 误报的「抬起」之后，这颗键其实还按着（自动重复还在来）。
+   * 把刚才那只爪悄悄扶回键帽：不重放砸键冲击、不弹气泡、不摇身子，长按不会被拆成「短按 + 长按」。
+   */
+  private restoreHeldKeySilently(vk: number, spec: KeySpec, now: number): void {
+    const side = this.lastPawKeySide.get(vk);
+    if (!side) return;
+    // 那只爪要是已经去按别的键了，就别抢回来（按得最久的锚点键优先）
+    for (const e of this.heldKeys.values()) {
+      if (e.side === side && e.specId !== spec.id) return;
+    }
+    const pt = this.clampToKeyboardSurface(this.getKeyWorldCenter(spec));
+    const paw = side === 'left' ? this.leftPaw : this.rightPaw;
+    paw.mode = 'poke';
+    paw.target = pt;
+    paw.pokeTime = PAW_HOLD_POKE_CAP;
+    paw.lastActiveAt = now;
+    this.heldKeys.set(vk, {
+      side,
+      specId: spec.id,
+      x: pt.x,
+      y: pt.y,
+      at: now,
+      start: now,
+    });
+  }
+
   private latestHeldKeyFor(
     side: 'left' | 'right',
   ): { side: 'left' | 'right'; specId: string; x: number; y: number; at: number; start: number } | null {
@@ -2338,11 +2389,13 @@ export class KuroCatEngine {
       // Keep paw pressed down onto the held keycap until keyUp (Fixes #3)
       paw.mode = 'poke';
       paw.target = { x: heldKey.x, y: heldKey.y };
-      paw.pokeTime = Math.min(paw.pokeTime + dt, 0.10);
+      paw.pokeTime = Math.min(paw.pokeTime + dt, PAW_HOLD_POKE_CAP);
       paw.lastActiveAt = now;
     } else if (paw.mode === 'poke') {
+      // 松手就收：pokeTime 在按住期间被压在 0.03 以下，松手后这里只要再过一帧就超过阈值，
+      // 于是爪子立刻离开键帽（不再像以前那样先干等 0.13 秒）。
       paw.pokeTime += dt;
-      if (paw.pokeTime > 0.13) {
+      if (paw.pokeTime > PAW_MIN_POKE_SECONDS) {
         if (paw.side === 'left' && (this.mouseLeftDown || this.mouseRightDown || now - this.lastMouseMoveAt < 450)) {
           paw.mode = 'mouse';
         } else if (now - this.lastAnyKeyAt < 650 || this.heldKeys.size > 0) {
@@ -2371,7 +2424,12 @@ export class KuroCatEngine {
     paw.curlWeight += (wantCurl - paw.curlWeight) * blendRate;
 
     // Unconditionally stable, framerate-independent tracking (ZERO Euler spring overshoot at any FPS!)
-    const followRate = paw.mode === 'poke' ? 42 : paw.mode === 'mouse' ? 32 : 22;
+    // 收爪那一下要利索：离目标还远的时候用高速率「甩」回去，落位前再切回软速，避免一拍一拍地飘。
+    const retracting =
+      paw.mode !== 'poke' &&
+      paw.mode !== 'mouse' &&
+      Math.hypot(paw.target.x - paw.pos.x, paw.target.y - paw.pos.y) > 8;
+    const followRate = paw.mode === 'poke' ? 42 : paw.mode === 'mouse' ? 32 : retracting ? 48 : 22;
     const follow = 1 - Math.exp(-followRate * dt);
     paw.pos.x += (paw.target.x - paw.pos.x) * follow;
     paw.pos.y += (paw.target.y - paw.pos.y) * follow;

@@ -33,8 +33,12 @@ import {
 type DesktopRenderMode = '2d' | '3d';
 type HeadphoneMode = 'auto' | 'on' | 'off';
 
-/** 按键抬起的防抖窗口（毫秒）：给误报的 KeyUp 一次被键盘自动重复救回来的机会 */
-const KEY_UP_DEBOUNCE_MS = 150;
+/**
+ * 按键抬起的防抖窗口（毫秒）：给误报的 KeyUp 一次被键盘自动重复救回来的机会。
+ * 只对「已经在自动重复」的键生效（= 真的按住不放），普通打字是 0 延迟收爪；
+ * 90ms 足够，因为按住时重复事件每 ~33ms 就来一条。
+ */
+const KEY_UP_DEBOUNCE_MS = 90;
 /** 会自动重复的键安静这么久还没等到抬起事件，就当成已经松手（见下面的看门狗） */
 const KEY_REPEAT_QUIET_MS = 900;
 
@@ -1272,9 +1276,11 @@ async function bootstrap(): Promise<void> {
 
   // 长按判定（键盘）：输入钩子偶尔会误报一次 KeyUp（提权窗口、独占全屏游戏、安全桌面前台等），
   // 只要漏进一次，猫咪就会把一次真实长按演成「先短按一下、再长按」。
-  // 这里把 KeyUp 延后 ~150ms 再派发：
-  //   · 期间来了这颗键的自动重复（repeat=true）→ 说明还按着，撤销这次抬起；
-  //   · 期间来了一个新的按下（repeat=false）→ 先把挂起的抬起兑现，再按新的一次处理。
+  // 处理办法分两段：
+  //   · 普通打字（这颗键没出现过自动重复）→ 抬起立刻派发，收爪零延迟；
+  //   · 真的按住（出现过自动重复）→ 抬起延后 90ms 派发：
+  //       期间来了这颗键的自动重复（repeat=true）→ 说明还按着，撤销这次抬起；
+  //       期间来了一个新的按下（repeat=false）→ 先把挂起的抬起兑现，再按新的一次处理。
   const pendingKeyUps = new Map<number, number>();
   /** 我们「以为」引擎里还按着的键（只用于兜底看门狗，引擎自己也有状态） */
   const pressedKeys = new Set<number>();
@@ -1347,9 +1353,17 @@ async function bootstrap(): Promise<void> {
         if (active3d && engine3d) engine3d.onKeyDown(p.vk, p.repeat);
         else engine.onKeyDown(p.vk, p.repeat);
         break;
-      case 'keyUp':
+      case 'keyUp': {
         lastKeyEventAt.set(p.vk, performance.now());
         if (pendingKeyUps.has(p.vk)) break;
+        // 普通打字：这颗键还没来得及自动重复就松手了 → 立刻收爪，一点延迟都不给。
+        // （以前所有抬起都延后 150ms，两次击键间隔常常不到 150ms，爪子于是永远收不回去。）
+        // 真的按住的键才会走到下面的防抖：那时每 ~33ms 就有一条自动重复，
+        // 钩子误报一次「抬起」也会在 90ms 内被撤销，长按不会被拆成两段。
+        if (!autoRepeatVks.has(p.vk)) {
+          dispatchKeyUp(p.vk);
+          break;
+        }
         pendingKeyUps.set(
           p.vk,
           window.setTimeout(() => {
@@ -1358,6 +1372,7 @@ async function bootstrap(): Promise<void> {
           }, KEY_UP_DEBOUNCE_MS),
         );
         break;
+      }
       case 'mouseMove': {
         // 猫视角鼠标反转：两个轴同时镜像，猫猫就像坐在桌子对面回头看人一样反应。
         // 只翻转位置，不改速度采样，所以指针速度/睡眠计时逻辑完全不受影响。

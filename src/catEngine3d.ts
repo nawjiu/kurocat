@@ -52,6 +52,8 @@ interface PawTrack3D {
   t0: number;
   dur: number;
   down: boolean;
+  /** 最近一次松手的时刻：用来决定「从松手算起」还悬在键帽上方多久（而不是从按下算起） */
+  upAt: number;
   lastActive: number;
   tuckWeight: number;
   /** 抓着鼠标时快速升到 1：手掌贴在鼠标上跟它一起走，不再叠一层弹簧延迟 */
@@ -1140,6 +1142,7 @@ export class KuroCatEngine3D {
         t0: -100,
         dur: 0.08,
         down: false,
+        upAt: -100,
         lastActive: -100,
         tuckWeight: 1,
         mouseGrip: 0,
@@ -2199,8 +2202,14 @@ export class KuroCatEngine3D {
       this.tailTap.down = false;
     }
     this.desk.setKeyDown(k.spec.id, false);
-    if (this.paws.L.keyId === k.spec.id) this.paws.L.down = false;
-    if (this.paws.R.keyId === k.spec.id) this.paws.R.down = false;
+    if (this.paws.L.keyId === k.spec.id) {
+      this.paws.L.down = false;
+      this.paws.L.upAt = this.elapsed;
+    }
+    if (this.paws.R.keyId === k.spec.id) {
+      this.paws.R.down = false;
+      this.paws.R.upAt = this.elapsed;
+    }
     for (const p of this.popups) {
       if (p.keyId === k.spec.id && p.upAt === null) p.upAt = this.elapsed;
     }
@@ -2885,9 +2894,12 @@ export class KuroCatEngine3D {
     // 9) Sleek Unified KuroCat Arms + Cozy Tucked Idle Belly Paws!
     const updatePaw = (paw: PawTrack3D, isLeft: boolean) => {
       const activeForMouse = isLeft && mousing;
-      const activeForKey = Boolean(paw.keyId && (paw.down || t - paw.t0 < 0.52)) && !this.asleep && !this.privacyMode;
+      // 松手后只在键帽上方短暂悬停 0.16 秒就收爪，而且这个计时从「松手」算起。
+      // 以前是从按下算起 0.52 秒 —— 快速轻点时等于爪子一直挂在键区，长按时反而一松手就弹走。
+      const activeForKey =
+        Boolean(paw.keyId && (paw.down || t - paw.upAt < 0.16)) && !this.asleep && !this.privacyMode;
       const wantTuck = !activeForMouse && !activeForKey ? 1 : 0;
-      paw.tuckWeight += (wantTuck - paw.tuckWeight) * approach(wantTuck ? 6.5 : 22, dt);
+      paw.tuckWeight += (wantTuck - paw.tuckWeight) * approach(wantTuck ? 11 : 22, dt);
       if (!activeForMouse) paw.mouseGrip = 0;
 
       this.tmpPawLocal.set(paw.side * 0.24, 0.16 - this.sleepAmt * 0.06, 0.54);
