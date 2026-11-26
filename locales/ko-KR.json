@@ -75,7 +75,9 @@
     "check_update": "업데이트 확인 v{ver}",
     "update_ready": "v{ver} 업데이트",
     "checking_short": "확인 중...",
-    "quit": "종료"
+    "quit": "종료",
+    "purr_volume_label": "골골송 볼륨 (상시 + 쓰다듬기)",
+    "purr_volume_mute": "음소거"
   },
   "breeds": {
     "black": "검은 고양이",

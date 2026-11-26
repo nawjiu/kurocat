@@ -75,7 +75,9 @@
     "check_update": "检查更新 v{ver}",
     "update_ready": "升级 v{ver}",
     "checking_short": "检测中...",
-    "quit": "退出"
+    "quit": "退出",
+    "purr_volume_label": "呼噜声音量（常驻 / 摸头共用）",
+    "purr_volume_mute": "静音"
   },
   "breeds": {
     "black": "经典小黑猫",

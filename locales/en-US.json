@@ -75,7 +75,9 @@
     "check_update": "Check Update v{ver}",
     "update_ready": "Update v{ver}",
     "checking_short": "Checking...",
-    "quit": "Quit"
+    "quit": "Quit",
+    "purr_volume_label": "Purr Volume (idle + petting)",
+    "purr_volume_mute": "Mute"
   },
   "breeds": {
     "black": "Black Cat",

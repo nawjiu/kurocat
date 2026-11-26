@@ -75,7 +75,9 @@
     "check_update": "更新を確認 v{ver}",
     "update_ready": "v{ver} に更新",
     "checking_short": "確認中...",
-    "quit": "終了"
+    "quit": "終了",
+    "purr_volume_label": "ゴロゴロ音量（常時＋撫で）",
+    "purr_volume_mute": "ミュート"
   },
   "breeds": {
     "black": "黒猫",
