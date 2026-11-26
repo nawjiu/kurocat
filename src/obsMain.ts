@@ -5,6 +5,7 @@ import {
   type TailKeyMode,
 } from './catEngine';
 import { catAudio } from './audio';
+import { AgentCompanionController, type AgentCompanionEvent } from './agentCompanion';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
 import { normalizeLayoutId, type KeyboardLayoutId } from './keyboardLayout';
 import type { CollarColorId, KuroCatEngine3D } from './catEngine3d';
@@ -44,6 +45,7 @@ interface ObsStateSnapshot {
 
 const canvas = document.getElementById('obs-canvas') as HTMLCanvasElement;
 const canvas3d = document.getElementById('obs-canvas-3d') as HTMLCanvasElement;
+const agentBubbleEl = document.getElementById('agent-bubble') as HTMLDivElement | null;
 const engine = new KuroCatEngine(canvas);
 
 let engine3d: KuroCatEngine3D | null = null;
@@ -52,6 +54,13 @@ let active3d = false;
 let webglBlocked = false;
 let privacyActive = false;
 let gameActive = false;
+
+const obsAgentCompanion = new AgentCompanionController({
+  bubbleEl: agentBubbleEl,
+  getTarget: () => (active3d && engine3d ? engine3d : engine),
+  is3DTarget: () => Boolean(active3d && engine3d),
+  allowSound: () => false,
+});
 
 // Mute audio inside OBS Browser Source so purring never double-plays on stream
 catAudio.setEnabled(false);
@@ -217,6 +226,7 @@ function applyState(): void {
 function handleInput(p: InputEvent): void {
   switch (p.kind) {
     case 'keyDown':
+      obsAgentCompanion.notifyRealUserInput();
       if (active3d && engine3d) engine3d.onKeyDown(p.vk, p.repeat);
       else engine.onKeyDown(p.vk, p.repeat);
       break;
@@ -304,6 +314,14 @@ function connectStream(): void {
       privacyActive = active;
       engine.setPrivacyMode(active);
       engine3d?.setPrivacyMode(active);
+      obsAgentCompanion.setPrivacyMode(active);
+    } catch {}
+  });
+
+  es.addEventListener('agentEvent', (ev) => {
+    try {
+      const payload = JSON.parse((ev as MessageEvent).data) as AgentCompanionEvent;
+      obsAgentCompanion.handleEvent(payload);
     } catch {}
   });
 

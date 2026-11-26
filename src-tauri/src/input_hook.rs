@@ -624,9 +624,7 @@ pub fn start_global_hooks(app: AppHandle) {
     });
 
     #[cfg(target_os = "macos")]
-    std::thread::spawn(|| {
-        macos_hook::run_macos_hook_loop();
-    });
+    macos_hook::start_input_listeners();
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(|| {
@@ -750,7 +748,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: usize, lparam: isiz
                     let ly = LAST_HOOK_MOUSE_Y.load(Ordering::Relaxed);
                     let now_ms = ms.time;
                     let prev_ms = LAST_HOOK_MOUSE_MS.load(Ordering::Relaxed);
-                    if ((px - lx).abs() > 1 || (py - ly).abs() > 1)
+                    if ((px as i64 - lx as i64).abs() > 1 || (py as i64 - ly as i64).abs() > 1)
                         && (lx == i32::MIN || now_ms.wrapping_sub(prev_ms) >= 24)
                     {
                         LAST_HOOK_MOUSE_X.store(px, Ordering::Relaxed);
@@ -849,11 +847,93 @@ fn run_windows_hook_loop() {
     }
 }
 
+/// Parses `codesign -d -r- <app>` output and returns a canonical Ad-hoc `cdhash` fingerprint
+/// ONLY when the bundle is ad-hoc signed (never for Apple Developer ID / certificate-signed apps).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn parse_macos_adhoc_cdhash(codesign_output: &str) -> Option<String> {
+    let req_line = codesign_output
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .split_once("designated =>")
+                .map(|(_, rhs)| rhs.trim())
+        })
+        .unwrap_or(codesign_output.trim());
+
+    let lower = req_line.to_ascii_lowercase();
+    // Never treat Apple Developer ID / CA-signed apps as ad-hoc
+    if lower.contains("anchor apple") || lower.contains("certificate ") {
+        return None;
+    }
+
+    let mut hashes: Vec<String> = Vec::new();
+    let mut rest = req_line;
+    while let Some(idx) = rest.find("cdhash H\"") {
+        let after = &rest[idx + "cdhash H\"".len()..];
+        let Some(end) = after.find('"') else {
+            break;
+        };
+        let hex = after[..end].trim().to_ascii_lowercase();
+        if hex.len() >= 16 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            hashes.push(hex);
+        }
+        rest = &after[end + 1..];
+    }
+
+    if hashes.is_empty() {
+        return None;
+    }
+    hashes.sort();
+    hashes.dedup();
+    Some(format!("cdhash:{}", hashes.join("|")))
+}
+
+/// Decides whether startup should run `tccutil reset` once to purge broken macOS "ghost toggles"
+/// left behind after an ad-hoc signed upgrade (either in-app auto-update or manual .dmg overwrite).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn should_auto_reset_stale_macos_tcc(
+    current_adhoc_sig: Option<&str>,
+    prev_recorded_sig: Option<&str>,
+    has_existing_settings: bool,
+    ax_trusted: bool,
+    listen_trusted: bool,
+) -> bool {
+    // Only applies to ad-hoc signed bundles (Developer ID preserves TCC across upgrades)
+    let Some(curr) = current_adhoc_sig else {
+        return false;
+    };
+    // Never disturb already-working permissions
+    if ax_trusted && listen_trusted {
+        return false;
+    }
+    match prev_recorded_sig.map(str::trim).filter(|s| !s.is_empty()) {
+        // Already checked/reset once for this exact binary hash — never loop!
+        Some(prev) if prev == curr => false,
+        // Upgraded from a previously recorded ad-hoc binary hash -> stale ghost entry!
+        Some(_) => true,
+        // Upgraded from an older version (<= v5.1.0) that already saved settings.json
+        None => has_existing_settings,
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub mod macos_hook {
-    use super::{hid_usage_to_vk, KeySource, RawHookMsg, HOOK_TX, KEY_EVENTS_RECEIVED};
+    use super::{
+        hid_usage_to_vk, parse_macos_adhoc_cdhash, should_auto_reset_stale_macos_tcc, KeySource,
+        RawHookMsg, HOOK_TX, KEY_EVENTS_RECEIVED,
+    };
+    use block2::{Block, RcBlock};
+    use objc2_app_kit::{
+        NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidWakeNotification,
+        NSWorkspaceSessionDidBecomeActiveNotification,
+    };
+    use objc2_foundation::NSNotification;
     use std::ffi::c_void;
+    use std::ptr::NonNull;
     use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+    use std::sync::Once;
+    use std::thread::{self, JoinHandle};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     type CGEventTapProxy = *mut c_void;
@@ -913,6 +993,7 @@ pub mod macos_hook {
     const K_CG_EVENT_OTHER_MOUSE_UP: u32 = 26;
     const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
     const K_CG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFFFFFF;
+    const K_CF_RUN_LOOP_RUN_FINISHED: i32 = 1;
 
     const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
     const K_CG_SCROLL_WHEEL_EVENT_DELTA_AXIS_1: u32 = 11;
@@ -981,6 +1062,7 @@ pub mod macos_hook {
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         static kCFRunLoopCommonModes: CFStringRef;
+        static kCFRunLoopDefaultMode: CFStringRef;
         static kCFBooleanTrue: CFBooleanRef;
         static kCFTypeDictionaryKeyCallBacks: u8;
         static kCFTypeDictionaryValueCallBacks: u8;
@@ -1022,7 +1104,10 @@ pub mod macos_hook {
         fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
         fn CFRunLoopRemoveSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
         fn CFRunLoopRun();
+        fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source: u8) -> i32;
         fn CFRunLoopStop(rl: CFRunLoopRef);
+        fn CFRunLoopPerformBlock(rl: CFRunLoopRef, mode: CFStringRef, block: &Block<dyn Fn()>);
+        fn CFRunLoopWakeUp(rl: CFRunLoopRef);
         fn CFAbsoluteTimeGetCurrent() -> f64;
         fn CFRunLoopTimerCreate(
             allocator: CFAllocatorRef,
@@ -1072,14 +1157,71 @@ pub mod macos_hook {
         fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     }
 
+    static HOOK_RUN_LOOP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
     static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+    static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
     static TAP_HAS_KEYBOARD: AtomicBool = AtomicBool::new(false);
     static HID_ACTIVE: AtomicBool = AtomicBool::new(false);
     static SNAPSHOT_AX: AtomicBool = AtomicBool::new(false);
     static SNAPSHOT_LISTEN: AtomicBool = AtomicBool::new(false);
     static RECONNECT_REQUESTED: AtomicBool = AtomicBool::new(false);
+    static HID_RECONNECT_REQUESTED: AtomicBool = AtomicBool::new(false);
     static LAST_TICK_WALL_MS: AtomicU64 = AtomicU64::new(0);
-    static LAST_HID_RETRY_WALL_MS: AtomicU64 = AtomicU64::new(0);
+
+    pub(super) fn start_input_listeners() {
+        install_wake_observers();
+        spawn_input_workers(run_event_tap_loop, run_hid_loop);
+    }
+
+    fn spawn_input_workers(
+        event_tap: impl FnOnce() + Send + 'static,
+        hid: impl FnOnce() + Send + 'static,
+    ) -> (JoinHandle<()>, JoinHandle<()>) {
+        // IOHIDManagerOpen/Close can block in a device driver. Keep that work off
+        // the run loop that delivers CGEventTap keyboard and mouse events.
+        (thread::spawn(event_tap), thread::spawn(hid))
+    }
+
+    fn install_wake_observers() {
+        let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let observer = RcBlock::new(|_: NonNull<NSNotification>| request_reconnect());
+        // NSWorkspace retains these capture-free callbacks for the lifetime of the app.
+        unsafe {
+            for name in [
+                NSWorkspaceDidWakeNotification,
+                NSWorkspaceScreensDidWakeNotification,
+                NSWorkspaceSessionDidBecomeActiveNotification,
+            ] {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(name),
+                    None,
+                    None,
+                    &observer,
+                );
+            }
+        }
+    }
+
+    fn request_reconnect() {
+        HID_RECONNECT_REQUESTED.store(true, Ordering::Release);
+        if RECONNECT_REQUESTED.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let rl = HOOK_RUN_LOOP.load(Ordering::Acquire);
+        if !rl.is_null() {
+            let stop = RcBlock::new(|| unsafe {
+                if RECONNECT_REQUESTED.swap(false, Ordering::AcqRel) {
+                    CFRunLoopStop(CFRunLoopGetCurrent());
+                }
+            });
+            // The worker owns this run loop for the lifetime of the app. Schedule cleanup
+            // on that same thread and wake it even when the watchdog has not fired.
+            unsafe {
+                CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, &stop);
+                CFRunLoopWakeUp(rl);
+            }
+        }
+    }
 
     #[derive(Debug, Clone)]
     pub struct MacInputStatus {
@@ -1099,12 +1241,10 @@ pub mod macos_hook {
     }
 
     pub fn get_macos_input_status() -> MacInputStatus {
-        let tap = TAP_PORT.load(Ordering::Acquire);
-        let tap_active = !tap.is_null() && unsafe { CGEventTapIsEnabled(tap) };
         MacInputStatus {
             accessibility: unsafe { AXIsProcessTrusted() },
             input_monitoring: unsafe { CGPreflightListenEventAccess() },
-            tap_active,
+            tap_active: TAP_ACTIVE.load(Ordering::Acquire),
             tap_has_keyboard: TAP_HAS_KEYBOARD.load(Ordering::Acquire),
             hid_active: HID_ACTIVE.load(Ordering::Acquire),
             key_events_received: KEY_EVENTS_RECEIVED.load(Ordering::Relaxed),
@@ -1117,7 +1257,7 @@ pub mod macos_hook {
                 let _ = CGRequestListenEventAccess();
             }
         }
-        RECONNECT_REQUESTED.store(true, Ordering::Release);
+        request_reconnect();
     }
 
     pub fn open_macos_privacy_pane(pane: &str) {
@@ -1155,7 +1295,7 @@ pub mod macos_hook {
             "未运行（需输入监控权限）"
         };
         let tip = if !st.accessibility || !st.input_monitoring {
-            "若系统设置里开关亮着但这里显示「未生效」，说明更新版本后系统缓存过期：请在「辅助功能」和「输入监控」中选中 KuroCat 点左下角「-」号删除，再点「+」号重新添加并重启。"
+            "若系统设置里开关亮着但这里显示「未生效」，说明更新版本后系统权限缓存过期：请直接点击托盘「重置旧权限并重新授权」，或在系统设置中先点「-」删除旧 KuroCat 再点「+」重新添加。"
         } else if st.key_events_received == 0 {
             "权限均已生效！请先随便敲几下键盘测试；若使用 Karabiner-Elements 仍无响应，可点击托盘「重新连接键盘监听」。"
         } else {
@@ -1196,6 +1336,93 @@ pub mod macos_hook {
             CFRelease(ev as *const c_void);
             Some((pt.x, pt.y))
         }
+    }
+
+    const MACOS_BUNDLE_ID: &str = "com.kurocat.pet";
+
+    fn current_macos_app_bundle() -> Option<std::path::PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let mut cur = exe.as_path();
+        while let Some(parent) = cur.parent() {
+            if parent.extension().and_then(|s| s.to_str()) == Some("app") {
+                return Some(parent.to_path_buf());
+            }
+            cur = parent;
+        }
+        None
+    }
+
+    fn read_current_adhoc_cdhash() -> Option<String> {
+        let bundle = current_macos_app_bundle()?;
+        let out = std::process::Command::new("/usr/bin/codesign")
+            .args(["-d", "-r-", bundle.to_str()?])
+            .output()
+            .ok()?;
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        parse_macos_adhoc_cdhash(&combined)
+    }
+
+    fn run_tccutil_reset_all() {
+        for service in ["Accessibility", "ListenEvent"] {
+            let _ = std::process::Command::new("/usr/bin/tccutil")
+                .args(["reset", service, MACOS_BUNDLE_ID])
+                .status();
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    /// Automatically purges stale broken TCC "ghost toggles" once after an ad-hoc upgrade
+    /// (covers both in-app updates and manual .dmg drag-and-replace upgrades).
+    fn cleanup_stale_tcc_on_adhoc_upgrade() {
+        let curr_sig = read_current_adhoc_cdhash();
+        let Some(ref sig_str) = curr_sig else {
+            return;
+        };
+
+        let marker_path = crate::config::app_data_dir().join("macos-adhoc-sig.txt");
+        let prev_sig = std::fs::read_to_string(&marker_path).ok();
+        let has_existing_settings = crate::config::config_path().is_file();
+        let (ax_trusted, listen_trusted) =
+            unsafe { (AXIsProcessTrusted(), CGPreflightListenEventAccess()) };
+
+        if should_auto_reset_stale_macos_tcc(
+            Some(sig_str.as_str()),
+            prev_sig.as_deref(),
+            has_existing_settings,
+            ax_trusted,
+            listen_trusted,
+        ) {
+            run_tccutil_reset_all();
+        }
+
+        if prev_sig.as_deref().map(str::trim) != Some(sig_str.as_str()) {
+            if let Some(parent) = marker_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&marker_path, sig_str);
+        }
+    }
+
+    /// Manual 1-click tray escape hatch: purges stale TCC entries and triggers fresh OS prompts.
+    pub fn reset_and_request_macos_permissions() {
+        std::thread::spawn(|| {
+            run_tccutil_reset_all();
+            request_permissions_once();
+            open_macos_privacy_pane("accessibility");
+            request_reconnect();
+        });
+    }
+
+    fn initialize_input_permissions() {
+        static INITIALIZED: Once = Once::new();
+        INITIALIZED.call_once(|| {
+            cleanup_stale_tcc_on_adhoc_upgrade();
+            request_permissions_once();
+        });
     }
 
     fn request_permissions_once() {
@@ -1579,10 +1806,48 @@ pub mod macos_hook {
         mgr
     }
 
+    fn run_hid_loop() {
+        initialize_input_permissions();
+        // A single worker owns the HID manager, even if opening a device is slow.
+        // Other notifications can request a reconnect without spawning more workers.
+        unsafe {
+            let rl = CFRunLoopGetCurrent();
+            loop {
+                HID_RECONNECT_REQUESTED.store(false, Ordering::Release);
+                if !CGPreflightListenEventAccess() {
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+
+                let mgr = start_hid_keyboard_listener(rl);
+                if mgr.is_null() {
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+                HID_ACTIVE.store(true, Ordering::Release);
+                while !HID_RECONNECT_REQUESTED.swap(false, Ordering::AcqRel)
+                    && CGPreflightListenEventAccess()
+                {
+                    if CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.0, 0)
+                        == K_CF_RUN_LOOP_RUN_FINISHED
+                    {
+                        break;
+                    }
+                }
+                HID_ACTIVE.store(false, Ordering::Release);
+                IOHIDManagerRegisterInputValueCallback(mgr, None, std::ptr::null_mut());
+                IOHIDManagerUnscheduleFromRunLoop(mgr, rl, kCFRunLoopCommonModes);
+                IOHIDManagerClose(mgr, K_IO_HID_OPTIONS_TYPE_NONE);
+                CFRelease(mgr);
+                thread::sleep(Duration::from_millis(500));
+            }
+        }
+    }
+
     /// Periodic self-healing watchdog running on the exact same CFRunLoop thread.
     /// Automatically tears down & rebuilds listeners when:
     /// 1. The user grants Input Monitoring or Accessibility after launch (no restart needed!)
-    /// 2. The Mac wakes from sleep (wall-clock jump > 12s, where Karabiner/WindowServer taps often stale)
+    /// 2. A long gap suggests sleep, as a fallback for missed workspace notifications
     /// 3. The CGEventTap gets disabled and cannot be re-enabled in place
     /// 4. The user clicks "重新连接键盘监听" in the menu bar
     extern "C" fn health_timer_callback(_timer: CFRunLoopTimerRef, _info: *mut c_void) {
@@ -1590,12 +1855,15 @@ pub mod macos_hook {
             let now_ms = wall_clock_ms();
             let prev_ms = LAST_TICK_WALL_MS.swap(now_ms, Ordering::AcqRel);
             let woke_from_sleep = prev_ms > 0 && now_ms.saturating_sub(prev_ms) > 12_000;
+            if woke_from_sleep {
+                HID_RECONNECT_REQUESTED.store(true, Ordering::Release);
+            }
 
             let ax_now = AXIsProcessTrusted();
             let listen_now = CGPreflightListenEventAccess();
             let ax_upgraded = !SNAPSHOT_AX.load(Ordering::Acquire) && ax_now;
             let listen_upgraded = !SNAPSHOT_LISTEN.load(Ordering::Acquire) && listen_now;
-            let manual_reconnect = RECONNECT_REQUESTED.swap(false, Ordering::AcqRel);
+            let reconnect_requested = RECONNECT_REQUESTED.swap(false, Ordering::AcqRel);
 
             let tap = TAP_PORT.load(Ordering::Acquire);
             let mut tap_dead = false;
@@ -1609,21 +1877,9 @@ pub mod macos_hook {
             } else if ax_now || listen_now {
                 tap_dead = true;
             }
+            TAP_ACTIVE.store(!tap.is_null() && !tap_dead, Ordering::Release);
 
-            let hid_needs_retry = !HID_ACTIVE.load(Ordering::Acquire)
-                && listen_now
-                && now_ms.saturating_sub(LAST_HID_RETRY_WALL_MS.load(Ordering::Acquire)) > 15_000;
-
-            if manual_reconnect
-                || ax_upgraded
-                || listen_upgraded
-                || woke_from_sleep
-                || tap_dead
-                || hid_needs_retry
-            {
-                if hid_needs_retry {
-                    LAST_HID_RETRY_WALL_MS.store(now_ms, Ordering::Release);
-                }
+            if reconnect_requested || ax_upgraded || listen_upgraded || woke_from_sleep || tap_dead {
                 CFRunLoopStop(CFRunLoopGetCurrent());
             }
         }
@@ -1637,9 +1893,10 @@ pub mod macos_hook {
         (flags & FLAG_OPTION) != 0
     }
 
-    pub fn run_macos_hook_loop() {
-        // Trigger both Accessibility and Input Monitoring prompts once on first launch
-        request_permissions_once();
+    fn run_event_tap_loop() {
+        let rl = unsafe { CFRunLoopGetCurrent() };
+        HOOK_RUN_LOOP.store(rl, Ordering::Release);
+        initialize_input_permissions();
 
         let mouse_mask: CGEventMask = (1u64 << K_CG_EVENT_LEFT_MOUSE_DOWN)
             | (1u64 << K_CG_EVENT_LEFT_MOUSE_UP)
@@ -1664,7 +1921,6 @@ pub mod macos_hook {
                 if !ax_ok && !listen_ok {
                     TAP_PORT.store(std::ptr::null_mut(), Ordering::Release);
                     TAP_HAS_KEYBOARD.store(false, Ordering::Release);
-                    HID_ACTIVE.store(false, Ordering::Release);
                     std::thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -1672,8 +1928,6 @@ pub mod macos_hook {
                 SNAPSHOT_AX.store(ax_ok, Ordering::Release);
                 SNAPSHOT_LISTEN.store(listen_ok, Ordering::Release);
                 LAST_TICK_WALL_MS.store(wall_clock_ms(), Ordering::Release);
-
-                let rl = CFRunLoopGetCurrent();
 
                 // Channel 1: CGEventTap (mouse + keyboard; prefers passive LISTEN_ONLY, falls back
                 // to pass-through DEFAULT tap if ListenEvent TCC is lagging behind Accessibility,
@@ -1717,6 +1971,7 @@ pub mod macos_hook {
                         TAP_HAS_KEYBOARD.store(tap_has_kb, Ordering::Release);
                         CFRunLoopAddSource(rl, tap_src, kCFRunLoopCommonModes);
                         CGEventTapEnable(tap, true);
+                        TAP_ACTIVE.store(CGEventTapIsEnabled(tap), Ordering::Release);
                     } else {
                         CFMachPortInvalidate(tap);
                         CFRelease(tap as *const c_void);
@@ -1729,21 +1984,7 @@ pub mod macos_hook {
                     TAP_HAS_KEYBOARD.store(false, Ordering::Release);
                 }
 
-                // Channel 2: Non-exclusive read-only IOHIDManager for Keyboard & Keypad.
-                // Receives events directly from physical keyboards AND Karabiner-Elements
-                // DriverKit VirtualHIDKeyboard, even when CGEventTap is blocked by Secure Input
-                // or disrupted by third-party event taps.
-                let hid_mgr = if listen_ok {
-                    start_hid_keyboard_listener(rl)
-                } else {
-                    std::ptr::null_mut()
-                };
-                HID_ACTIVE.store(!hid_mgr.is_null(), Ordering::Release);
-                if hid_mgr.is_null() && listen_ok {
-                    LAST_HID_RETRY_WALL_MS.store(wall_clock_ms(), Ordering::Release);
-                }
-
-                if tap.is_null() && hid_mgr.is_null() {
+                if tap.is_null() {
                     std::thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -1769,14 +2010,8 @@ pub mod macos_hook {
                     CFRunLoopTimerInvalidate(timer);
                     CFRelease(timer as *const c_void);
                 }
-                if !hid_mgr.is_null() {
-                    HID_ACTIVE.store(false, Ordering::Release);
-                    IOHIDManagerRegisterInputValueCallback(hid_mgr, None, std::ptr::null_mut());
-                    IOHIDManagerUnscheduleFromRunLoop(hid_mgr, rl, kCFRunLoopCommonModes);
-                    IOHIDManagerClose(hid_mgr, K_IO_HID_OPTIONS_TYPE_NONE);
-                    CFRelease(hid_mgr as *const c_void);
-                }
                 if !tap.is_null() {
+                    TAP_ACTIVE.store(false, Ordering::Release);
                     TAP_PORT.store(std::ptr::null_mut(), Ordering::Release);
                     TAP_HAS_KEYBOARD.store(false, Ordering::Release);
                     if !tap_src.is_null() {
@@ -1788,6 +2023,73 @@ pub mod macos_hook {
                 }
             }
             std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    #[cfg(test)]
+    mod wake_tests {
+        use super::*;
+        use std::sync::mpsc;
+
+        extern "C" fn keep_run_loop_open(_: CFRunLoopTimerRef, _: *mut c_void) {}
+
+        #[test]
+        fn workspace_resume_reconnects_event_tap_while_hid_open_is_blocked() {
+            install_wake_observers();
+            let center = NSWorkspace::sharedWorkspace().notificationCenter();
+            for name in unsafe {
+                [
+                    NSWorkspaceDidWakeNotification,
+                    NSWorkspaceScreensDidWakeNotification,
+                    NSWorkspaceSessionDidBecomeActiveNotification,
+                ]
+            } {
+                unsafe { center.postNotificationName_object(name, None) };
+                assert!(RECONNECT_REQUESTED.swap(false, Ordering::AcqRel), "{name}");
+                assert!(HID_RECONNECT_REQUESTED.swap(false, Ordering::AcqRel), "{name}");
+            }
+
+            let (tap_ready, wait_for_tap) = mpsc::channel();
+            let (tap_result, wait_for_result) = mpsc::channel();
+            let (hid_opening, wait_for_hid) = mpsc::channel();
+            let (unblock_hid, wait_to_unblock) = mpsc::channel();
+            let (tap, hid) = spawn_input_workers(
+                move || unsafe {
+                    let rl = CFRunLoopGetCurrent();
+                    let timer = CFRunLoopTimerCreate(
+                        std::ptr::null(),
+                        CFAbsoluteTimeGetCurrent() + 10.0,
+                        0.0,
+                        0,
+                        0,
+                        keep_run_loop_open,
+                        std::ptr::null_mut(),
+                    );
+                    assert!(!timer.is_null());
+                    CFRunLoopAddTimer(rl, timer, kCFRunLoopDefaultMode);
+                    HOOK_RUN_LOOP.store(rl, Ordering::Release);
+                    tap_ready.send(()).unwrap();
+                    let result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 3.0, 0);
+                    HOOK_RUN_LOOP.store(std::ptr::null_mut(), Ordering::Release);
+                    CFRunLoopTimerInvalidate(timer);
+                    CFRelease(timer);
+                    tap_result.send(result).unwrap();
+                },
+                move || {
+                    hid_opening.send(()).unwrap();
+                    let _ = wait_to_unblock.recv();
+                },
+            );
+            wait_for_hid.recv_timeout(Duration::from_secs(3)).unwrap();
+            wait_for_tap.recv_timeout(Duration::from_secs(3)).unwrap();
+            unsafe { center.postNotificationName_object(NSWorkspaceDidWakeNotification, None) };
+            let result = wait_for_result.recv_timeout(Duration::from_secs(2));
+            unblock_hid.send(()).unwrap();
+            tap.join().unwrap();
+            hid.join().unwrap();
+            const K_CF_RUN_LOOP_RUN_STOPPED: i32 = 2;
+            assert_eq!(result.unwrap(), K_CF_RUN_LOOP_RUN_STOPPED);
+            assert!(HID_RECONNECT_REQUESTED.swap(false, Ordering::AcqRel));
         }
     }
 }
@@ -2493,5 +2795,38 @@ mod tests {
             dedup.on_key_down(0x43, KeySource::Hid, t2 + Duration::from_millis(20)),
             Some(false)
         );
+    }
+
+    #[test]
+    fn parses_macos_adhoc_cdhash_and_skips_developer_id() {
+        let universal_adhoc = "Executable=/Applications/KuroCat.app/Contents/MacOS/KuroCat\n\
+            designated => cdhash H\"c5869ec4f5a71deee3cb204dc12605e18d490ce6\" or cdhash H\"263fe7dab4d157a259f8eded6c69135e7c1658ac\"";
+        assert_eq!(
+            parse_macos_adhoc_cdhash(universal_adhoc).as_deref(),
+            Some("cdhash:263fe7dab4d157a259f8eded6c69135e7c1658ac|c5869ec4f5a71deee3cb204dc12605e18d490ce6")
+        );
+
+        let dev_id = "Executable=/Applications/KuroCat.app/Contents/MacOS/KuroCat\n\
+            designated => identifier \"com.kurocat.pet\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCDE12345\"";
+        assert_eq!(parse_macos_adhoc_cdhash(dev_id), None);
+    }
+
+    #[test]
+    fn stale_macos_tcc_auto_reset_triggers_only_once_per_adhoc_upgrade() {
+        let sig_old = "cdhash:1111111111111111";
+        let sig_new = "cdhash:2222222222222222";
+
+        // Developer ID app -> NEVER reset
+        assert!(!should_auto_reset_stale_macos_tcc(None, Some(sig_old), true, false, false));
+        // Both permissions already working -> NEVER reset
+        assert!(!should_auto_reset_stale_macos_tcc(Some(sig_new), Some(sig_old), true, true, true));
+        // Same binary relaunch -> NEVER loop-reset
+        assert!(!should_auto_reset_stale_macos_tcc(Some(sig_new), Some(sig_new), true, false, false));
+        // Upgraded from older ad-hoc binary & missing perms -> RESET once
+        assert!(should_auto_reset_stale_macos_tcc(Some(sig_new), Some(sig_old), true, false, true));
+        // Upgraded from legacy <= v5.1.0 (has settings.json, no marker yet) & missing perms -> RESET once
+        assert!(should_auto_reset_stale_macos_tcc(Some(sig_new), None, true, false, false));
+        // Brand-new fresh install (no settings.json, no marker) -> no stale entries to reset
+        assert!(!should_auto_reset_stale_macos_tcc(Some(sig_new), None, false, false, false));
     }
 }

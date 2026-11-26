@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CatSkinConfig, CatSpot } from './catSkins';
 
-const MAX_CUSTOM_SPOTS = 8;
+const MAX_CUSTOM_SPOTS = 16;
 
 export type RenderStyle3D = '3d' | '2d';
 
@@ -45,7 +45,12 @@ export interface FurPalette3D {
   patchB: string;
   point: string;
   earOuter: string | null;
+  earTip?: string | null;
   tailBase: string | null;
+  tailTip?: string | null;
+  tailStripes?: number;
+  armColor?: string | null;
+  blush?: string | null;
   inner: string;
   stripes: number;
   muzzle: number;
@@ -75,6 +80,24 @@ export interface FurPalette3D {
   accentSide: string;
 }
 
+function parseRgbOrHexColor(raw: string | undefined | null, fallbackHex: string): { hex: string; opacity?: number } {
+  if (!raw) return { hex: fallbackHex };
+  const s = raw.trim();
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) {
+    return { hex: s };
+  }
+  const m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9.]+))?\s*\)$/i);
+  if (m) {
+    const r = Math.min(255, parseInt(m[1], 10));
+    const g = Math.min(255, parseInt(m[2], 10));
+    const b = Math.min(255, parseInt(m[3], 10));
+    const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    const opacity = m[4] !== undefined ? Math.max(0.15, Math.min(1, parseFloat(m[4]))) : undefined;
+    return { hex, opacity };
+  }
+  return { hex: fallbackHex };
+}
+
 export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): FurPalette3D {
   const is3D = style === '3d';
   const accent = skin.accentColor || '#d4f044';
@@ -82,7 +105,9 @@ export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): 
   const isWarmAccent = /^#(f[a-f0-9][89a-c]|ff[789a-c]|e[89a-f][789a])/i.test(accent);
   const accentRight = isWarmAccent ? '#58c7ff' : '#ff7b3b';
 
-  switch (skin.id) {
+  // Only untouched built-in skins use hand-tuned presets; customized built-ins (`builtin === false`)
+  // fall through to the dynamic custom palette so MCP overrides take effect immediately in 3D!
+  if (skin.builtin !== false) switch (skin.id) {
     case 'black':
       return {
         id: 'black',
@@ -319,27 +344,45 @@ export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): 
         accentRight,
         accentSide,
       };
-    default: {
+  }
+  {
       const pat = skin.pattern || 'solid';
-      const c = new THREE.Color(skin.furColor || '#f2a452');
+      const furHex = parseRgbOrHexColor(skin.furColor, '#f2a452').hex;
+      const c = new THREE.Color(furHex);
       const isDark = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b < 0.16;
+      const whiskerParsed = parseRgbOrHexColor(skin.whiskerColor, isDark ? '#d8dce4' : '#7f7268');
+      const blushParsed = skin.blushColor ? parseRgbOrHexColor(skin.blushColor, '#f4889e').hex : null;
       return {
         id: skin.id || 'custom',
-        fur: skin.furColor || '#f2a452',
-        light: skin.bellyBibColor || '#faf8f2',
-        dark: skin.stripeColor || skin.furSecondaryColor || skin.furColor || '#664422',
-        patchA: skin.maskColor || '#ea9445',
-        patchB: skin.calicoPatchColor || '#2e2927',
-        point: skin.maskColor || skin.earOuterColor || '#5a4436',
+        fur: furHex,
+        light: parseRgbOrHexColor(skin.bellyBibColor, '#faf8f2').hex,
+        dark: parseRgbOrHexColor(skin.stripeColor || skin.furSecondaryColor || furHex, '#664422').hex,
+        patchA: parseRgbOrHexColor(skin.maskColor, '#ea9445').hex,
+        patchB: parseRgbOrHexColor(skin.calicoPatchColor, '#2e2927').hex,
+        point: parseRgbOrHexColor(skin.maskColor || skin.earOuterColor, '#5a4436').hex,
         earOuter:
-          skin.earOuterColor && skin.earOuterColor.toLowerCase() !== (skin.furColor || '').toLowerCase()
-            ? skin.earOuterColor
+          skin.earOuterColor && skin.earOuterColor.toLowerCase() !== furHex.toLowerCase()
+            ? parseRgbOrHexColor(skin.earOuterColor, furHex).hex
+            : null,
+        earTip:
+          skin.earTipColor && skin.earTipColor.toLowerCase() !== (skin.earOuterColor || furHex).toLowerCase()
+            ? parseRgbOrHexColor(skin.earTipColor, furHex).hex
             : null,
         tailBase:
-          skin.tailColor && skin.tailColor.toLowerCase() !== (skin.furColor || '').toLowerCase()
-            ? skin.tailColor
+          skin.tailColor && skin.tailColor.toLowerCase() !== furHex.toLowerCase()
+            ? parseRgbOrHexColor(skin.tailColor, furHex).hex
             : null,
-        inner: skin.earInnerColor || '#f0bcc0',
+        tailTip:
+          skin.tailTipColor && skin.tailTipColor.toLowerCase() !== furHex.toLowerCase()
+            ? parseRgbOrHexColor(skin.tailTipColor, furHex).hex
+            : null,
+        tailStripes: skin.tailStripes || pat === 'tabby' ? 1 : 0,
+        armColor:
+          skin.armColor && skin.armColor.toLowerCase() !== furHex.toLowerCase()
+            ? parseRgbOrHexColor(skin.armColor, furHex).hex
+            : null,
+        blush: blushParsed,
+        inner: parseRgbOrHexColor(skin.earInnerColor, '#f0bcc0').hex,
         stripes: pat === 'tabby' ? 1 : 0,
         muzzle: pat === 'tabby' || pat === 'bicolor' || pat === 'tuxedo' ? 1 : 0,
         bib: skin.bellyBibColor || pat === 'bicolor' || pat === 'tuxedo' ? 1 : 0,
@@ -348,26 +391,25 @@ export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): 
         points: pat === 'siamese' || pat === 'bicolor' ? 1 : 0,
         innerAmt: skin.earInnerColor ? 0.9 : 0,
         shade: is3D ? 0.86 : 0,
-        paw: skin.pawColor || skin.furColor || '#faf8f2',
+        paw: parseRgbOrHexColor(skin.pawColor || furHex, '#faf8f2').hex,
         pawTuckLine: isDark ? 'rgba(182, 188, 198, 0.34)' : 'rgba(110, 98, 90, 0.28)',
         toe: '#bdb5aa',
-        whisker: isDark ? '#d8dce4' : '#7f7268',
-        whiskerOpacity: 0.6,
-        nose: skin.noseColor || '#ee8e9e',
-        mouth: skin.mouthColor || '#5e5550',
-        eyeTop: skin.eyeColorTop || '#4a88d8',
-        eyeBottom: skin.eyeColorBottom || '#a3d2f2',
-        pupil: skin.pupilColor || '#10141c',
-        lid: skin.squintColor || '#282c36',
-        squintLine: skin.squintColor || '#282c36',
+        whisker: whiskerParsed.hex,
+        whiskerOpacity: whiskerParsed.opacity ?? 0.6,
+        nose: skin.noseColor ? parseRgbOrHexColor(skin.noseColor, '#ee8e9e').hex : (isDark ? null : '#ee8e9e'),
+        mouth: skin.mouthColor ? parseRgbOrHexColor(skin.mouthColor, '#5e5550').hex : (isDark ? null : '#5e5550'),
+        eyeTop: parseRgbOrHexColor(skin.eyeColorTop, '#4a88d8').hex,
+        eyeBottom: parseRgbOrHexColor(skin.eyeColorBottom || skin.eyeColorTop, '#a3d2f2').hex,
+        pupil: parseRgbOrHexColor(skin.pupilColor, '#10141c').hex,
+        lid: parseRgbOrHexColor(skin.squintColor, '#282c36').hex,
+        squintLine: parseRgbOrHexColor(skin.squintColor, '#282c36').hex,
         eyeCatchlight: skin.eyeCatchlight !== false,
         isDarkFur: isDark,
-        lightContour: isDark ? null : skin.outlineColor || '#6b5e54',
+        lightContour: isDark ? null : parseRgbOrHexColor(skin.outlineColor, '#6b5e54').hex,
         accent,
         accentRight,
         accentSide,
       };
-    }
   }
 }
 
@@ -401,8 +443,15 @@ export class FurShaderSystem {
       uPawColor: { value: new THREE.Color('#151417') },
       uEarOuter: { value: new THREE.Color('#141315') },
       uEarOuterAmt: { value: 0 },
+      uEarTip: { value: new THREE.Color('#141315') },
+      uEarTipAmt: { value: 0 },
+      uArmColor: { value: new THREE.Color('#141315') },
+      uArmColorAmt: { value: 0 },
       uTailBase: { value: new THREE.Color('#141315') },
       uTailBaseAmt: { value: 0 },
+      uTailTip: { value: new THREE.Color('#141315') },
+      uTailTipAmt: { value: 0 },
+      uTailStripes: { value: 0 },
       uSpotCount: { value: 0 },
       uSpotPos: { value: Array.from({ length: MAX_CUSTOM_SPOTS }, () => new THREE.Vector4()) },
       uSpotCol: { value: Array.from({ length: MAX_CUSTOM_SPOTS }, () => new THREE.Vector4()) },
@@ -515,8 +564,8 @@ export class FurShaderSystem {
     `;
 
     const fragmentShader = `
-      uniform vec3 uFur, uLight, uDark, uPatchA, uPatchB, uPoint, uInner, uPawColor, uEarOuter, uTailBase;
-      uniform float uStripes, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uInnerAmt, uShade, uIsDarkFur, uEarOuterAmt, uTailBaseAmt;
+      uniform vec3 uFur, uLight, uDark, uPatchA, uPatchB, uPoint, uInner, uPawColor, uEarOuter, uEarTip, uArmColor, uTailBase, uTailTip;
+      uniform float uStripes, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uInnerAmt, uShade, uIsDarkFur, uEarOuterAmt, uEarTipAmt, uArmColorAmt, uTailBaseAmt, uTailTipAmt, uTailStripes;
       uniform int uSpotCount;
       uniform vec4 uSpotPos[${MAX_CUSTOM_SPOTS}];
       uniform vec4 uSpotCol[${MAX_CUSTOM_SPOTS}];
@@ -648,8 +697,9 @@ export class FurShaderSystem {
         #endif
 
         #ifdef TAIL
-          dark = max(dark, rings(vAlong, 5.0, 0.40) * step(0.16, vAlong) * uStripes);
-          dark = max(dark, smoothstep(0.88, 0.91, vAlong) * uStripes);
+          float tStrip = max(uStripes, uTailStripes);
+          dark = max(dark, rings(vAlong, 5.0, 0.40) * step(0.16, vAlong) * tStrip);
+          dark = max(dark, smoothstep(0.88, 0.91, vAlong) * tStrip);
           pa = rings(vAlong + 0.14, 1.0, 0.32);
           pb = 1.0 - pa;
           point = smoothstep(0.0, 0.34, vAlong);
@@ -684,6 +734,10 @@ export class FurShaderSystem {
         #else
           #ifdef EAR
             col = mix(col, uEarOuter, uEarOuterAmt * smoothstep(0.0, 0.14, p.y));
+            col = mix(col, uEarTip, uEarTipAmt * smoothstep(0.16, 0.31, p.y));
+          #endif
+          #ifdef ARM
+            col = mix(col, uArmColor, uArmColorAmt * smoothstep(0.04, 0.28, vAlong));
           #endif
           #ifdef TAIL
             col = mix(col, uTailBase, uTailBaseAmt * smoothstep(0.0, 0.24, vAlong));
@@ -746,6 +800,11 @@ export class FurShaderSystem {
               }
             }
           }
+        #endif
+
+        #ifdef TAIL
+          // Fluffy tail tip colour (vAlong: 0 at root -> 1 at tip), feathered over the last stretch
+          col = mix(col, uTailTip, smoothstep(0.70, 0.90, vAlong) * uTailTipAmt);
         #endif
 
         // Designer-vinyl / soft matte-velvet 3D studio lighting (inspired by KuroCat app icon — ZERO KeyCat white outline!)
@@ -827,12 +886,31 @@ export class FurShaderSystem {
     } else {
       this.uniforms.uEarOuterAmt.value = 0.0;
     }
+    if (p.earTip) {
+      setColor('uEarTip', p.earTip);
+      this.uniforms.uEarTipAmt.value = 1.0;
+    } else {
+      this.uniforms.uEarTipAmt.value = 0.0;
+    }
+    if (p.armColor) {
+      setColor('uArmColor', p.armColor);
+      this.uniforms.uArmColorAmt.value = 1.0;
+    } else {
+      this.uniforms.uArmColorAmt.value = 0.0;
+    }
     if (p.tailBase) {
       setColor('uTailBase', p.tailBase);
       this.uniforms.uTailBaseAmt.value = 1.0;
     } else {
       this.uniforms.uTailBaseAmt.value = 0.0;
     }
+    if (p.tailTip) {
+      setColor('uTailTip', p.tailTip);
+      this.uniforms.uTailTipAmt.value = 1.0;
+    } else {
+      this.uniforms.uTailTipAmt.value = 0.0;
+    }
+    this.uniforms.uTailStripes.value = p.tailStripes ?? p.stripes;
 
     const list = Array.isArray(spots) ? spots.slice(0, MAX_CUSTOM_SPOTS) : [];
     const posArr = this.uniforms.uSpotPos.value as THREE.Vector4[];

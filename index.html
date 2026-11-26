@@ -8,41 +8,43 @@
   <body>
     <canvas id="pet-canvas"></canvas>
     <canvas id="pet-canvas-3d" class="hidden"></canvas>
+    <div id="agent-bubble" class="agent-bubble hidden" role="status" aria-live="polite"></div>
 
     <div id="update-toast" class="update-toast hidden" role="status" aria-live="polite">
       <span class="update-toast-text" id="update-toast-text">✨ 新版本</span>
-      <button class="update-toast-btn hidden" id="btn-toast-install" type="button">更新</button>
-      <button class="update-toast-btn hidden" id="btn-toast-unlock" type="button">解锁</button>
-      <button class="update-toast-btn secondary hidden" id="btn-toast-open" type="button">发布页</button>
-      <button class="update-toast-close" id="btn-toast-close" type="button" title="关闭">×</button>
+      <button class="update-toast-btn hidden" id="btn-toast-install" data-i18n="toast.btn_install" type="button">立即更新</button>
+      <button class="update-toast-btn hidden" id="btn-toast-unlock" data-i18n="toast.btn_unlock" type="button">解锁</button>
+      <button class="update-toast-btn secondary hidden" id="btn-toast-open" data-i18n="toast.btn_open" type="button">打开发布页</button>
+      <button class="update-toast-close" id="btn-toast-close" type="button" data-i18n-title="menu.close_title" title="关闭">×</button>
     </div>
 
-    <div id="tail-picker-bar" class="tail-picker-bar hidden" role="dialog" aria-label="自定义尾巴按键">
+    <div id="tail-picker-bar" class="tail-picker-bar hidden" role="dialog" aria-label="Custom Tail Keys">
       <button
         class="tail-picker-close"
         id="btn-tail-cancel"
         type="button"
-        aria-label="取消选键"
-        title="取消选键"
+        aria-label="Close"
+        data-i18n-title="menu.close_title"
+        title="关闭"
       ></button>
       <div class="tail-picker-top">
-        <span class="tail-picker-title" id="tail-picker-title">🐾 点键帽或敲键盘（已选 4 键）</span>
-        <button class="tail-picker-done" id="btn-tail-done" type="button">确定</button>
+        <span class="tail-picker-title" id="tail-picker-title">🐾 点击键盘勾选尾巴按键（已选 4 键）</span>
+        <button class="tail-picker-done" id="btn-tail-done" data-i18n="toast.tail_picker_done" type="button">完成</button>
       </div>
       <div class="tail-picker-actions">
         <div class="tail-picker-presets">
-          <button class="tail-preset-btn" data-tailpreset="office" type="button" aria-pressed="false">回车空格</button>
-          <button class="tail-preset-btn" data-tailpreset="rightFn" type="button" aria-pressed="false">方向/小键盘</button>
-          <button class="tail-preset-btn" data-tailpreset="edgeMods" type="button" aria-pressed="false">外侧功能键</button>
+          <button class="tail-preset-btn" data-tailpreset="office" type="button" aria-pressed="false">Enter / Space</button>
+          <button class="tail-preset-btn" data-tailpreset="rightFn" type="button" aria-pressed="false">Arrows / Num</button>
+          <button class="tail-preset-btn" data-tailpreset="edgeMods" type="button" aria-pressed="false">Edge Keys</button>
         </div>
-        <button class="tail-preset-btn danger" data-tailpreset="clear" type="button">清空</button>
+        <button class="tail-preset-btn danger" data-tailpreset="clear" data-i18n="toast.tail_picker_clear" type="button">清空</button>
       </div>
     </div>
 
     <div id="context-menu" class="context-menu hidden">
       <div class="menu-header" id="menu-header">🐈‍⬛ KuroCat 小黑猫</div>
       <div class="menu-scale-row">
-        <span class="menu-scale-label">角色外观（支持 MCP 定制）</span>
+        <span class="menu-scale-label" data-i18n="menu.breed_label">角色外观（支持 MCP 定制）</span>
         <div class="breed-pills" id="breed-pills">
           <button class="breed-pill active" data-breed="black">🐈‍⬛ 小黑猫</button>
           <button class="breed-pill" data-breed="ragdoll">🐱 布偶猫</button>
@@ -50,28 +52,28 @@
         </div>
       </div>
       <div class="menu-scale-row" id="render-mode-row">
-        <span class="menu-scale-label">视觉模式（可选 3D / 2D）</span>
+        <span class="menu-scale-label" data-i18n="menu.render_mode_label">视觉模式（可选 3D / 2D）</span>
         <div class="kb-pills">
-          <button class="kb-pill active" data-rendermode="3d" type="button">✨ 3D 立体</button>
-          <button class="kb-pill" data-rendermode="2d" type="button">🎨 2D 经典</button>
+          <button class="kb-pill active" data-rendermode="3d" data-i18n="menu.render_3d" type="button">✨ 3D 立体</button>
+          <button class="kb-pill" data-rendermode="2d" data-i18n="menu.render_2d" type="button">🎨 2D 经典</button>
         </div>
       </div>
       <div class="menu-scale-row" id="collar-row">
-        <span class="menu-scale-label">3D 项圈铃铛</span>
+        <span class="menu-scale-label" data-i18n="menu.collar_label">3D 项圈铃铛</span>
         <div class="collar-pills">
-          <button class="kb-pill active" data-collar="none" type="button">无</button>
-          <button class="kb-pill" data-collar="red" type="button">红</button>
-          <button class="kb-pill" data-collar="blue" type="button">蓝</button>
-          <button class="kb-pill" data-collar="pink" type="button">粉</button>
-          <button class="kb-pill" data-collar="green" type="button">绿</button>
+          <button class="kb-pill active" data-collar="none" data-i18n="menu.collar_none" type="button">无</button>
+          <button class="kb-pill" data-collar="red" data-i18n="menu.collar_red" type="button">红</button>
+          <button class="kb-pill" data-collar="blue" data-i18n="menu.collar_blue" type="button">蓝</button>
+          <button class="kb-pill" data-collar="pink" data-i18n="menu.collar_pink" type="button">粉</button>
+          <button class="kb-pill" data-collar="green" data-i18n="menu.collar_green" type="button">绿</button>
         </div>
       </div>
       <div class="menu-scale-row" id="headphone-row">
-        <span class="menu-scale-label">电竞耳机</span>
+        <span class="menu-scale-label" data-i18n="menu.headphone_label">电竞耳机</span>
         <div class="render-mode-pills">
-          <button class="kb-pill active" data-headphonemode="off" type="button">关闭</button>
-          <button class="kb-pill" data-headphonemode="auto" type="button">🎮 游戏自动</button>
-          <button class="kb-pill" data-headphonemode="on" type="button">🎧 常戴</button>
+          <button class="kb-pill active" data-headphonemode="off" data-i18n="menu.headphone_off" type="button">关闭</button>
+          <button class="kb-pill" data-headphonemode="auto" data-i18n="menu.headphone_auto" type="button">🎮 游戏自动</button>
+          <button class="kb-pill" data-headphonemode="on" data-i18n="menu.headphone_on" type="button">🎧 常戴</button>
         </div>
       </div>
       <div class="menu-scale-row" id="purr-volume-row">
@@ -98,80 +100,84 @@
       </div>
 
       <div class="menu-sep"></div>
-      <button class="menu-item" data-action="toggle-privacy" title="检测到输入密码时猫猫自动闭眼、大肥鱼双手捂眼并隐藏全部按键">
-        <span>输密码自动闭眼防偷窥</span>
+      <button class="menu-item" data-action="toggle-privacy">
+        <span data-i18n="menu.toggle_privacy">输密码自动闭眼防偷窥</span>
         <span class="menu-check" id="chk-privacy">✓</span>
       </button>
       <button class="menu-item" data-action="toggle-bubbles">
-        <span>悬浮按键气泡</span>
+        <span data-i18n="menu.toggle_bubbles">悬浮按键气泡</span>
         <span class="menu-check" id="chk-bubbles">✓</span>
       </button>
-      <button class="menu-item" data-action="toggle-lock" title="开启后按住 Alt 键仍可拖动或右键解锁">
-        <span>锁定鼠标穿透（Alt 解锁）</span>
+      <button class="menu-item" data-action="toggle-lock">
+        <span data-i18n="menu.toggle_lock">锁定鼠标穿透（Alt 解锁）</span>
         <span class="menu-check" id="chk-lock"></span>
       </button>
       <button class="menu-item" data-action="toggle-sound">
-        <span>摸头呼噜声</span>
+        <span data-i18n="menu.toggle_sound">摸头呼噜声</span>
         <span class="menu-check" id="chk-sound">✓</span>
       </button>
-      <button class="menu-item" data-action="toggle-purr-always" title="开启后不摸也一直小声呼噜；关闭时松开抚摸约 2 秒后自动停止">
-        <span>呼噜声常驻</span>
+      <button class="menu-item" data-action="toggle-purr-always" data-i18n-title="menu.toggle_purr_always_title" title="开启后不摸也一直小声呼噜；关闭时松开抚摸约 2 秒后自动停止">
+        <span data-i18n="menu.toggle_purr_always">呼噜声常驻</span>
         <span class="menu-check" id="chk-purr-always"></span>
       </button>
-      <button class="menu-item" data-action="toggle-mouse-invert" title="猫猫按自己的视角理解鼠标：左右上下全部反过来（像隔着桌子回头看你的猫）">
-        <span>鼠标反转（猫视角）</span>
+      <button class="menu-item" data-action="toggle-mouse-invert" data-i18n-title="menu.toggle_mouse_invert_title" title="猫猫按自己的视角理解鼠标：左右上下全部反过来（像隔着桌子回头看你的猫）">
+        <span data-i18n="menu.toggle_mouse_invert">鼠标反转（猫视角）</span>
         <span class="menu-check" id="chk-mouse-invert"></span>
       </button>
       <button class="menu-item" data-action="toggle-top">
-        <span>始终置顶显示</span>
+        <span data-i18n="menu.toggle_top">始终置顶显示</span>
         <span class="menu-check" id="chk-top">✓</span>
       </button>
       <button class="menu-item" data-action="toggle-autostart">
-        <span>开机自动启动</span>
+        <span data-i18n="menu.toggle_autostart">开机自动启动</span>
         <span class="menu-check" id="chk-autostart"></span>
       </button>
       <div class="menu-sep"></div>
       <button class="menu-item" data-action="toggle-mcp">
-        <span>开启 MCP 扩展</span>
+        <span data-i18n="menu.toggle_mcp">开启 MCP 扩展</span>
         <span class="menu-check" id="chk-mcp">✓</span>
       </button>
       <button class="menu-item" data-action="copy-mcp" id="btn-copy-mcp">
-        <span>复制 MCP 配置</span>
-        <span class="menu-hint" id="mcp-copy-hint">AI 捏猫</span>
+        <span data-i18n="menu.copy_mcp">复制 MCP 配置</span>
+        <span class="menu-hint" id="mcp-copy-hint" data-i18n="menu.mcp_hint">AI 捏猫</span>
+      </button>
+      <button class="menu-item" data-action="copy-hooks" id="btn-copy-hooks">
+        <span data-i18n="menu.copy_hooks">复制 AI 伴侣 Hook</span>
+        <span class="menu-hint" id="hooks-copy-hint" data-i18n="menu.hooks_hint">写代码提醒</span>
       </button>
       <div class="menu-sep"></div>
       <div class="menu-scale-row">
-        <span class="menu-scale-label">键盘配列与方向</span>
+        <span class="menu-scale-label" data-i18n="menu.kb_label">键盘配列与方向</span>
         <div class="kb-pills kb-pills--3">
-          <button class="kb-pill active" data-kblayout="65" title="65% 紧凑配列">65%</button>
-          <button class="kb-pill" data-kblayout="98" title="98 键（980）配列：保留小键盘，方向键收进主键区">98 键</button>
-          <button class="kb-pill" data-kblayout="108" title="108 键全尺寸">108 键</button>
+          <button class="kb-pill active" data-kblayout="65" data-i18n="menu.kb_65">65% 紧凑</button>
+          <button class="kb-pill" data-kblayout="98" data-i18n="menu.kb_98">98 键</button>
+          <button class="kb-pill" data-kblayout="108" data-i18n="menu.kb_108">108 全尺寸</button>
         </div>
         <div class="kb-pills">
-          <button class="kb-pill active" data-kborient="cat">面向猫咪</button>
-          <button class="kb-pill" data-kborient="viewer">面向观众</button>
+          <button class="kb-pill active" data-kborient="cat" data-i18n="menu.kb_cat">面向猫咪</button>
+          <button class="kb-pill" data-kborient="viewer" data-i18n="menu.kb_viewer">面向观众</button>
         </div>
       </div>
       <div class="menu-scale-row">
         <div class="scale-header">
-          <span class="menu-scale-label">尾巴拍键模式</span>
+          <span class="menu-scale-label" data-i18n="menu.tail_label">尾巴拍键模式</span>
           <span class="tail-mode-badge" id="tail-mode-badge">智能第三只手</span>
         </div>
         <div class="tail-mode-pills">
-          <button class="kb-pill active" data-tailmode="smart" title="平时双手打字，两手忙不过来或敲完回车时自动出尾">智能</button>
-          <button class="kb-pill" data-tailmode="custom" title="只拍你亲手勾选的按键">自定义</button>
-          <button class="kb-pill" data-tailmode="edge" title="近尾外侧边缘区（不拆 WASD）">边缘</button>
-          <button class="kb-pill" data-tailmode="off" title="尾巴只自然摆动，不拍任何键">关闭</button>
+          <button class="kb-pill active" data-tailmode="smart" data-i18n="menu.tail_smart">智能</button>
+          <button class="kb-pill" data-tailmode="custom" data-i18n="menu.tail_custom">自定义</button>
+          <button class="kb-pill" data-tailmode="edge" data-i18n="menu.tail_edge">边缘</button>
+          <button class="kb-pill" data-tailmode="off" data-i18n="menu.tail_off">关闭</button>
         </div>
         <button class="tail-pick-trigger" data-action="open-tail-picker" id="btn-open-tail-picker" type="button">
-          <span>🐾 在键盘上点选尾巴按键</span>
+          <span data-i18n="menu.tail_pick_btn">🐾 在键盘上点选尾巴按键</span>
           <span class="menu-hint" id="tail-keys-count">4 键</span>
         </button>
       </div>
       <div class="menu-scale-row">
         <div class="scale-header">
-          <span class="menu-scale-label">尺寸缩放</span>
-          <button class="scale-value-btn" id="scale-value" type="button" title="点击复位 100%">100%</button>
+          <span class="menu-scale-label" data-i18n="menu.scale_label">尺寸缩放</span>
+          <button class="scale-value-btn" id="scale-value" type="button" data-i18n-title="menu.scale_reset_title" title="点击复位 100%">100%</button>
         </div>
         <div class="scale-slider-wrap">
           <input
@@ -190,20 +196,35 @@
           </div>
         </div>
       </div>
+      <div class="menu-scale-row">
+        <span class="menu-scale-label" data-i18n="menu.perf_lang_label">帧率上限与界面语言</span>
+        <div class="kb-pills">
+          <button class="kb-pill active" data-fpscap="0" data-i18n="menu.fps_auto" type="button">60 流畅</button>
+          <button class="kb-pill" data-fpscap="30" data-i18n="menu.fps_eco" type="button">30 省电</button>
+        </div>
+        <div class="lang-pills">
+          <button class="kb-pill active" data-lang="auto" data-i18n="menu.lang_auto" type="button">跟随系统</button>
+          <button class="kb-pill" data-lang="zh-CN" type="button">简体中文</button>
+          <button class="kb-pill" data-lang="zh-TW" type="button">繁體中文</button>
+          <button class="kb-pill" data-lang="en-US" type="button">English</button>
+          <button class="kb-pill" data-lang="ja-JP" type="button">日本語</button>
+          <button class="kb-pill" data-lang="ko-KR" type="button">한국어</button>
+        </div>
+      </div>
       <div class="menu-sep"></div>
       <button class="menu-item" data-action="desktop-shortcut" id="btn-desktop-shortcut">
-        <span>创建桌面图标</span>
+        <span data-i18n="menu.desktop_shortcut">创建桌面图标</span>
         <span class="menu-hint" id="shortcut-hint">KuroCat</span>
       </button>
       <button class="menu-item" data-action="reset-pos">
-        <span>重置位置到右下角</span>
+        <span data-i18n="menu.reset_pos">重置位置到右下角</span>
       </button>
       <button class="menu-item" data-action="check-update" id="btn-check-update">
-        <span>检查更新</span>
-        <span class="menu-hint" id="update-hint">v5.1.0</span>
+        <span id="update-btn-label">检查更新</span>
+        <span class="menu-hint" id="update-hint">v5.1.2</span>
       </button>
       <button class="menu-item danger" data-action="quit">
-        <span>退出 KuroCat</span>
+        <span data-i18n="menu.quit">退出 KuroCat</span>
       </button>
     </div>
 

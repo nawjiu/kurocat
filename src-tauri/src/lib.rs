@@ -3,6 +3,7 @@
 mod cats;
 mod config;
 mod game_detect;
+mod i18n;
 mod input_hook;
 #[cfg(target_os = "macos")]
 mod macos_window;
@@ -26,7 +27,7 @@ use config::{
     try_save_settings, AppSettings,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Listener, LogicalSize, Manager, PhysicalPosition, Size, State};
@@ -247,10 +248,15 @@ pub fn shutdown_pet_windows() {
     if win_needs_win7_ulw() {
         win7_layered::shutdown();
     }
+    release_single_instance_lock();
 }
 
 pub fn run_mcp_stdio() {
     mcp::run_stdio_mcp();
+}
+
+pub fn run_hook_cli(args: &[String]) {
+    mcp::run_hook_cli(args);
 }
 
 pub struct AppState {
@@ -258,11 +264,78 @@ pub struct AppState {
     pub menu_open: Arc<AtomicBool>,
     tail_picker_bounds: Arc<Mutex<Option<TailPickerBounds>>>,
     pub menu_creating: Arc<AtomicBool>,
+    pub menu_close_gen: Arc<AtomicU64>,
     pub menu_opened_at: Arc<Mutex<Instant>>,
     pub dragging: Arc<AtomicBool>,
     pub mcp_enabled: Arc<AtomicBool>,
     pub update_banner_open: Arc<AtomicBool>,
     pub paused_guard: Arc<AtomicBool>,
+}
+
+/// Shared Chromium / WebView2 lean runtime flags.
+/// IMPORTANT: Must match `src-tauri/tauri.conf.json`'s `additionalBrowserArgs` byte-for-byte;
+/// otherwise Windows WebView2 rejects creating the 2nd ("menu") window with HRESULT 0x8007139F.
+const WEBVIEW_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-networking --disable-sync --disable-extensions --disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints --js-flags=--max-old-space-size=96";
+
+const SIDE_MENU_IDLE_DESTROY_SECS: u64 = 25;
+
+fn schedule_side_menu_idle_destroy(app: AppHandle) {
+    let gen = app
+        .state::<AppState>()
+        .menu_close_gen
+        .fetch_add(1, Ordering::AcqRel)
+        + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(SIDE_MENU_IDLE_DESTROY_SECS));
+        let state = app.state::<AppState>();
+        if state.menu_open.load(Ordering::Acquire)
+            || state.menu_creating.load(Ordering::Acquire)
+            || state.menu_close_gen.load(Ordering::Acquire) != gen
+        {
+            return;
+        }
+        if let Some(menu_win) = app.get_webview_window("menu") {
+            // Fully destroy the hidden 2nd WebView2 renderer process after idle grace period
+            // to reclaim ~35-55 MB RAM while keeping rapid reopen instant inside the window.
+            let _ = menu_win.destroy();
+        }
+    });
+}
+
+#[tauri::command]
+fn get_resolved_locale(state: State<'_, AppState>) -> String {
+    let lang = state.settings.lock().unwrap().language.clone();
+    i18n::effective_locale(&lang).to_string()
+}
+
+#[tauri::command]
+fn trim_idle_memory() {
+    #[cfg(windows)]
+    {
+        static LAST_TRIM_MS: AtomicU64 = AtomicU64::new(0);
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let prev = LAST_TRIM_MS.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(prev) < 45_000 {
+            return;
+        }
+        LAST_TRIM_MS.store(now_ms, Ordering::Relaxed);
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> isize;
+            fn SetProcessWorkingSetSize(
+                h_process: isize,
+                dw_minimum_working_set_size: usize,
+                dw_maximum_working_set_size: usize,
+            ) -> i32;
+        }
+        unsafe {
+            let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -299,21 +372,160 @@ fn get_game_active() -> bool {
 }
 
 #[tauri::command]
-fn get_mcp_config(state: State<'_, AppState>) -> String {
-    let port = state.settings.lock().unwrap().mcp_port;
+fn get_mcp_config() -> String {
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "KuroCat.exe".to_string());
+    // Pure, conflict-free Stdio MCP config (compatible with Antigravity, Claude Desktop/Code,
+    // Cursor, Codex, WorkBuddy, Windsurf, Trae; HTTP Streamable endpoint is also live on /mcp).
     serde_json::to_string_pretty(&serde_json::json!({
         "mcpServers": {
             "kurocat": {
                 "command": exe,
-                "args": ["--mcp"],
-                "url": format!("http://127.0.0.1:{}/mcp", port)
+                "args": ["--mcp"]
             }
         }
     }))
     .unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_agent_hooks_config(state: State<'_, AppState>) -> String {
+    let (port, lang) = {
+        let s = state.settings.lock().unwrap();
+        (if s.mcp_port == 0 { 27420 } else { s.mcp_port }, s.language.clone())
+    };
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "KuroCat.exe".to_string());
+    let exe_json = serde_json::to_string(&exe).unwrap_or_else(|_| "\"KuroCat.exe\"".to_string());
+    let agy_cmd = format!("\"{}\" --hook --source Antigravity", exe);
+    let claude_cmd = format!("\"{}\" --hook --source Claude", exe);
+    let wb_cmd = format!("\"{}\" --hook --source WorkBuddy", exe);
+    let codex_cmd = format!("\"{}\" --hook --source Codex", exe);
+    let dsh_cmd = format!("\"{}\" --hook --source DeepSeek", exe);
+    let qwen_cmd = format!("\"{}\" --hook --source Qwen", exe);
+
+    let config_json = serde_json::to_string_pretty(&serde_json::json!({
+        "mcpServers": {
+            "kurocat": {
+                "command": exe,
+                "args": ["--mcp"]
+            }
+        },
+        "http_streamable_mcp_url": format!("http://127.0.0.1:{}/mcp", port),
+        "http_hook_url": format!("http://127.0.0.1:{}/hook", port),
+        "doubao_work_setup": {
+            "mode": "direct_http_and_memory (no local hooks.json needed)",
+            "hook_endpoint": format!("http://127.0.0.1:{}/hook", port),
+            "mcp_endpoint": format!("http://127.0.0.1:{}/mcp", port),
+            "optional_native_mcp_connector": {
+                "streamable_http_url": format!("http://127.0.0.1:{}/mcp", port),
+                "stdio": {
+                    "command": exe,
+                    "args": ["--mcp"]
+                }
+            },
+            "memory_rule": format!(
+                "将以下规则保存为跨会话长期偏好（不要在用户目录创建临时脚本文件）：每次开始处理实质任务前，向 http://127.0.0.1:{}/hook 发送 UTF-8 JSON {{\"status\":\"working\",\"source\":\"豆包工作版\",\"text\":\"处理任务中…\"}}；需用户确认发 status:\"waiting\"；报错发 status:\"error\"；完成后发 status:\"done\",\"text\":\"任务完成！\"。",
+                port
+            )
+        },
+        "workbuddy_hooks": {
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": wb_cmd, "timeout": 3 }] }],
+                "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": wb_cmd, "timeout": 3 }] }],
+                "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": wb_cmd, "timeout": 3 }] }],
+                "PermissionRequest": [{ "hooks": [{ "type": "command", "command": wb_cmd, "timeout": 3 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": wb_cmd, "timeout": 3 }] }]
+            }
+        },
+        "deepseek_harness_hooks": {
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": dsh_cmd, "timeout": 3 }] }],
+                "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": dsh_cmd, "timeout": 3 }] }],
+                "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": dsh_cmd, "timeout": 3 }] }],
+                "PermissionRequest": [{ "hooks": [{ "type": "command", "command": dsh_cmd, "timeout": 3 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": dsh_cmd, "timeout": 3 }] }]
+            }
+        },
+        "codex_hooks_json": {
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": codex_cmd, "timeout": 3 }] }],
+                "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": codex_cmd, "timeout": 3 }] }],
+                "PermissionRequest": [{ "hooks": [{ "type": "command", "command": codex_cmd, "timeout": 3 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": codex_cmd, "timeout": 3 }] }]
+            }
+        },
+        "codex_config_toml": format!(
+            "notify = [{}, \"--hook\", \"--source\", \"Codex\"]\n\n[mcp_servers.kurocat]\ncommand = {}\nargs = [\"--mcp\"]",
+            exe_json, exe_json
+        ),
+        "qwen_code_hooks": {
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": qwen_cmd, "timeout": 3 }] }],
+                "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": qwen_cmd, "timeout": 3 }] }],
+                "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": qwen_cmd, "timeout": 3 }] }],
+                "PermissionRequest": [{ "hooks": [{ "type": "command", "command": qwen_cmd, "timeout": 3 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": qwen_cmd, "timeout": 3 }] }]
+            }
+        },
+        "antigravity_hooks_json": {
+            "kurocat-companion": {
+                "SessionStart": [{ "type": "command", "command": agy_cmd, "timeout": 3 }],
+                "PreInvocation": [{ "type": "command", "command": agy_cmd, "timeout": 3 }],
+                "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": agy_cmd, "timeout": 3 }] }],
+                "Stop": [{ "type": "command", "command": agy_cmd, "timeout": 3 }]
+            }
+        },
+        "claude_code_hooks": {
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": claude_cmd, "timeout": 3 }] }],
+                "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": claude_cmd, "timeout": 3 }] }],
+                "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": claude_cmd, "timeout": 3 }] }],
+                "PermissionRequest": [{ "hooks": [{ "type": "command", "command": claude_cmd, "timeout": 3 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": claude_cmd, "timeout": 3 }] }]
+            }
+        }
+    }))
+    .unwrap_or_default();
+
+    let resolved = crate::i18n::effective_locale(&lang);
+    if resolved == "zh-CN" || resolved == "zh-TW" {
+        format!(
+            "请帮我把桌面宠物 KuroCat 的**任务状态联动**接入你当前运行的客户端（请自动判断你是 豆包工作版 / WorkBuddy / DeepSeek Harness / Codex / 千问 / Antigravity / Claude Code / Cursor 等，目标是干活时桌宠自动敲键盘，待确认/出错/任务完成时气泡提醒）：\n\
+            1. **情况 A — 无本地 hooks 配置文件的桌面端 Agent（如豆包工作版）**：\n\
+               - **不要修改别的客户端配置，也不要在项目/桌面目录创建临时 `.ps1` 或 `.json` 脚本文件**；\n\
+               - 请直接把下方 `doubao_work_setup.memory_rule` **保存为你的跨会话长期偏好/记忆**，统一通过 UTF-8 JSON 调用本地 `POST http://127.0.0.1:{}/hook` 同步 `working / waiting / error / done`（避免 Windows 命令行中文乱码）。\n\
+            2. **情况 B — 支持本地配置文件的 Agent（合并写入，完整保留我原有的其他配置，绝不覆盖删除已有项）**：\n\
+               - 腾讯 WorkBuddy / CodeBuddy：合并 `mcpServers.kurocat` + `workbuddy_hooks`\n\
+               - DeepSeek Harness (`dsh`)：合并 `mcpServers.kurocat` + `deepseek_harness_hooks`\n\
+               - OpenAI Codex CLI：`~/.codex/config.toml`（`[mcp_servers.kurocat]` 与 `notify`）+ `~/.codex/hooks.json`\n\
+               - 千问 Qwen Code：`~/.qwen/settings.json` 合并 `mcpServers.kurocat` + `qwen_code_hooks`\n\
+               - Antigravity（反重力）：`~/.gemini/config/mcp_config.json` + `~/.gemini/config/hooks.json`\n\
+               - Claude Code / Cursor / Windsurf / Trae：合并 `mcpServers.kurocat` + `claude_code_hooks`（也支持 Streamable HTTP `http://127.0.0.1:{}/mcp`）\n\
+            3. **立刻验收**：请通过 UTF-8 JSON 向 `POST http://127.0.0.1:{}/hook` 发送 `{{\"status\":\"done\",\"source\":\"<你的名字>\",\"text\":\"AI 伴侣配置成功！\"}}` 让我看到小猫冒泡。配置并验收完成后简短回复结果即可，无需额外推荐其他功能。\n\n\
+            ```json\n{}\n```",
+            port, port, port, config_json
+        )
+    } else {
+        format!(
+            "Please configure **live task-status sync** for the KuroCat desktop pet on your current client (auto-detect whether you are Doubao Work, WorkBuddy, DeepSeek Harness, OpenAI Codex CLI, Qwen Code, Antigravity, Claude Code, Cursor, etc., so the pet auto-types while working and alerts on waiting/error/done):\n\
+            1. **Case A — Desktop Agents without local hooks config files (e.g. Doubao Work)**:\n\
+               - **Do NOT touch other clients' config files and do NOT create temporary `.ps1`/`.json` scripts in my workspace**;\n\
+               - Save `doubao_work_setup.memory_rule` into your **long-term memory / preferences** so future chats automatically POST UTF-8 JSON to `http://127.0.0.1:{}/hook` (`working` / `waiting` / `error` / `done`).\n\
+            2. **Case B — Clients with local config files (MERGE cleanly without overwriting existing entries)**:\n\
+               - WorkBuddy / CodeBuddy: merge `mcpServers.kurocat` + `workbuddy_hooks`\n\
+               - DeepSeek Harness (`dsh`): merge `mcpServers.kurocat` + `deepseek_harness_hooks`\n\
+               - OpenAI Codex CLI: `~/.codex/config.toml` (`[mcp_servers.kurocat]` + `notify`) + `~/.codex/hooks.json`\n\
+               - Qwen Code: `~/.qwen/settings.json` (`mcpServers.kurocat` + `qwen_code_hooks`)\n\
+               - Antigravity: `~/.gemini/config/mcp_config.json` + `~/.gemini/config/hooks.json`\n\
+               - Claude Code / Cursor / Windsurf / Trae: merge `mcpServers.kurocat` + `claude_code_hooks` (or Streamable HTTP `http://127.0.0.1:{}/mcp`)\n\
+            3. **Live verification**: POST UTF-8 JSON `{{\"status\":\"done\",\"source\":\"<your-name>\",\"text\":\"KuroCat AI Companion connected!\"}}` to `http://127.0.0.1:{}/hook`, then reply briefly with the result without suggesting extra features.\n\n\
+            ```json\n{}\n```",
+            port, port, port, config_json
+        )
+    }
 }
 
 #[tauri::command]
@@ -342,14 +554,17 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
     patch.render_mode = config::normalize_render_mode(&patch.render_mode);
     patch.collar_color = config::normalize_collar_color(&patch.collar_color);
     patch.headphone_mode = config::normalize_headphone_mode(&patch.headphone_mode);
+    patch.fps_cap = config::normalize_fps_cap(patch.fps_cap);
+    patch.language = config::normalize_language(&patch.language);
 
-    let (prev_autostart, prev_scale, prev_layout, prev_obs_hide) = {
+    let (prev_autostart, prev_scale, prev_layout, prev_obs_hide, prev_language) = {
         let s = state.settings.lock().unwrap();
         (
             s.autostart,
             s.scale,
             s.keyboard_layout.clone(),
             s.obs_enabled && s.obs_hide_pet,
+            s.language.clone(),
         )
     };
     if patch.autostart != prev_autostart {
@@ -400,13 +615,16 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
         save_settings(&s);
     }
     let _ = app.emit("kuro-settings", patch.clone());
+    if patch.language != prev_language {
+        tray::refresh_tray_language(&app);
+    }
     if size_changed {
         reposition_context_menu_if_open(&app);
     }
     patch
 }
 
-const SIDE_MENU_LOGICAL_W: f64 = 266.0;
+const SIDE_MENU_LOGICAL_W: f64 = 276.0;
 
 /// Computes a non-overlapping physical position `(mx, my)` for the floating menu popover
 /// beside the cat window: prefers LEFT (since the cat defaults to bottom-right), then RIGHT,
@@ -496,7 +714,7 @@ fn current_pet_rect_and_monitor(app: &AppHandle) -> Option<((i32, i32, i32, i32)
 fn side_menu_geometry(app: &AppHandle) -> Option<(i32, i32, f64, f64)> {
     let (pet_rect, work_area, sf) = current_pet_rect_and_monitor(app)?;
     let mon_logical_h = work_area.3 as f64 / sf.max(0.5);
-    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 648.0);
+    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 686.0);
     let mw = (SIDE_MENU_LOGICAL_W * sf).round() as i32;
     let mh = (menu_logical_h * sf).round() as i32;
     let gap = (10.0 * sf).round() as i32;
@@ -551,6 +769,11 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
         }
     }
 
+    // Cancel any pending idle destroy before reusing or building the side menu.
+    app.state::<AppState>()
+        .menu_close_gen
+        .fetch_add(1, Ordering::AcqRel);
+
     let menu_win = if let Some(existing) = app.get_webview_window("menu") {
         existing
     } else {
@@ -589,7 +812,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
             // MUST match `tauri.conf.json` main window's `additionalBrowserArgs` identically;
             // otherwise Windows WebView2 rejects creating a 2nd window in the same userDataFolder
             // with HRESULT 0x8007139F (ERROR_INVALID_STATE)!
-            .additional_browser_args("--autoplay-policy=no-user-gesture-required")
+            .additional_browser_args(WEBVIEW_BROWSER_ARGS)
             .build()
             {
                 Ok(w) => w,
@@ -613,6 +836,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
                             let _ = w.hide();
                         }
                         state.menu_open.store(false, Ordering::Relaxed);
+                        schedule_side_menu_idle_destroy(app_ev.clone());
                     }
                 }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -624,6 +848,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
                         .state::<AppState>()
                         .menu_open
                         .store(false, Ordering::Relaxed);
+                    schedule_side_menu_idle_destroy(app_ev.clone());
                 }
                 _ => {}
             });
@@ -652,6 +877,7 @@ fn close_context_menu(app: AppHandle) {
     app.state::<AppState>()
         .menu_open
         .store(false, Ordering::Relaxed);
+    schedule_side_menu_idle_destroy(app);
 }
 
 #[tauri::command]
@@ -969,12 +1195,15 @@ pub fn reload_and_emit_all(app: &AppHandle) {
     let cats = all_cats();
     let state = app.state::<AppState>();
 
-    let (disk_settings, size_changed, top_changed, display_changed) = {
+    let (disk_settings, size_changed, top_changed, display_changed, obs_hide_changed, lang_changed) = {
         let mut s = state.settings.lock().unwrap();
         let disk_settings = load_settings();
         let sc = (s.scale - disk_settings.scale).abs() > 0.01
             || s.keyboard_layout != disk_settings.keyboard_layout;
         let tc = s.always_on_top != disk_settings.always_on_top;
+        let ohc = (s.obs_enabled && s.obs_hide_pet)
+            != (disk_settings.obs_enabled && disk_settings.obs_hide_pet);
+        let lc = s.language != disk_settings.language;
         #[cfg(target_os = "macos")]
         let display_changed = s.display_id != disk_settings.display_id;
         #[cfg(windows)]
@@ -982,11 +1211,19 @@ pub fn reload_and_emit_all(app: &AppHandle) {
         #[cfg(all(not(windows), not(target_os = "macos")))]
         let display_changed = false;
         *s = disk_settings.clone();
-        (disk_settings, sc, tc, display_changed)
+        (disk_settings, sc, tc, display_changed, ohc, lc)
     };
     state
         .mcp_enabled
         .store(disk_settings.mcp_enabled, Ordering::Relaxed);
+    obs::sync_obs_server(app, disk_settings.obs_enabled, disk_settings.obs_port);
+    if obs_hide_changed && !state.paused_guard.load(Ordering::Relaxed) {
+        set_pet_visible(app, !(disk_settings.obs_enabled && disk_settings.obs_hide_pet));
+    }
+    tray::sync_checkmarks(&disk_settings);
+    if lang_changed {
+        tray::refresh_tray_language(app);
+    }
 
     if top_changed {
         set_pet_always_on_top(app, disk_settings.always_on_top);
@@ -1515,13 +1752,14 @@ pub fn win_restart_as_admin(app: AppHandle) {
         };
         if result > 32 {
             crate::input_hook::set_hooks_paused(true);
+            release_single_instance_lock();
             app.exit(0);
         }
     });
 }
 
 #[cfg(windows)]
-fn win_wait_for_previous_pid_if_requested() {
+fn win_wait_for_previous_pid_if_requested() -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
@@ -1540,6 +1778,7 @@ fn win_wait_for_previous_pid_if_requested() {
         }
     }
 
+    let waited = wait_pid.is_some();
     if let Some(pid) = wait_pid {
         if pid != 0 && pid != std::process::id() {
             unsafe {
@@ -1562,6 +1801,16 @@ fn win_wait_for_previous_pid_if_requested() {
             std::thread::sleep(Duration::from_millis(200));
         }
     }
+
+    // Opportunistically remove any leftover `.exe.old` renamed aside by NSIS_HOOK_PREINSTALL (#73).
+    if let Ok(exe) = std::env::current_exe() {
+        let stale_old = exe.with_extension("exe.old");
+        if stale_old.exists() {
+            let _ = std::fs::remove_file(&stale_old);
+        }
+    }
+
+    waited
 }
 
 fn is_over_interactive_silhouette(rx: f64, ry: f64, is_wide: bool) -> (bool, bool) {
@@ -2216,6 +2465,252 @@ fn win_configure_local_webview2_runtime() {
     }
 }
 
+/// Keeps the kill-on-close job object handle alive for the whole process lifetime.
+/// The handle must never be closed: closing it is what triggers the kill, so it is the
+/// job's only owner and dies with us (the kernel closes it on exit, which is the point).
+#[cfg(windows)]
+static WINDOWS_JOB_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(windows)]
+pub(crate) fn win_has_kill_on_close_job() -> bool {
+    WINDOWS_JOB_HANDLE.load(Ordering::Relaxed) != 0
+}
+
+#[cfg(windows)]
+const WIN_JOB_LIMIT_FLAGS: u32 = {
+    use windows_sys::Win32::System::JobObjects::{
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+};
+
+/// WebView2 spawns its `msedgewebview2.exe` browser/GPU/renderer helpers as ordinary
+/// child processes. When KuroCat dies hard (crash or Task Manager "End task"), nothing
+/// gets to run our exit code and the whole helper tree can survive as orphans.
+///
+/// Assigning ourselves to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job Object before Tauri
+/// starts moves cleanup into the kernel (matching Electron/Chromium). We also set
+/// `JOB_OBJECT_LIMIT_BREAKAWAY_OK` so self-update installers and restarted binaries spawned
+/// by `updater.rs` with `CREATE_BREAKAWAY_FROM_JOB` survive `app.exit(0)`.
+#[cfg(windows)]
+fn win_kill_webview2_children_on_exit() {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return;
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = WIN_JOB_LIMIT_FLAGS;
+        let configured = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if configured == 0 || AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
+            // Best effort only: Windows 7 cannot nest job objects, so being launched from
+            // a process that already owns a job (some terminals / installers) makes the
+            // assignment fail. Leave the old behaviour untouched in that case.
+            let _ = CloseHandle(job);
+            return;
+        }
+        // Deliberately never closed: the handle must outlive everything else, because
+        // closing it is precisely what fires the kill.
+        WINDOWS_JOB_HANDLE.store(job as usize, Ordering::Relaxed);
+    }
+}
+
+/// Process-lifetime single-instance guard (Fixes #74 duplicate tray icons/processes).
+/// Note: `--mcp` stdio mode exits in `main.rs` before `run()`, so AI MCP clients are never blocked.
+#[cfg(windows)]
+static WINDOWS_SINGLE_INSTANCE_MUTEX: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(windows)]
+const WIN_SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\KuroCat.SingleInstance.Mutex";
+#[cfg(windows)]
+const WIN_SINGLE_INSTANCE_WAKE_EVENT: &str = "Local\\KuroCat.ShowExisting.Event";
+
+#[cfg(windows)]
+fn win_try_acquire_named_mutex(name: &str) -> Result<usize, bool> {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
+    };
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let handle = CreateMutexW(std::ptr::null(), 0, wide.as_ptr());
+        let err = GetLastError();
+        if handle.is_null() {
+            if err == ERROR_ACCESS_DENIED {
+                // Another (e.g. elevated admin) instance owns the mutex in this session.
+                return Err(true);
+            }
+            // Unexpected OS error: fail open so we never prevent startup.
+            return Err(false);
+        }
+        if err == ERROR_ALREADY_EXISTS {
+            let _ = CloseHandle(handle);
+            return Err(true);
+        }
+        Ok(handle as usize)
+    }
+}
+
+#[cfg(windows)]
+fn win_signal_existing_instance() {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent};
+
+    const EVENT_MODIFY_STATE: u32 = 0x0002;
+    let wide: Vec<u16> = WIN_SINGLE_INSTANCE_WAKE_EVENT
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let ev = OpenEventW(EVENT_MODIFY_STATE, 0, wide.as_ptr());
+        if !ev.is_null() {
+            let _ = SetEvent(ev);
+            let _ = CloseHandle(ev);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn win_start_single_instance_wake_listener(app: AppHandle) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+
+    const INFINITE: u32 = 0xFFFF_FFFF;
+    const WAIT_OBJECT_0: u32 = 0;
+
+    std::thread::spawn(move || {
+        let wide: Vec<u16> = WIN_SINGLE_INSTANCE_WAKE_EVENT
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let ev = unsafe { CreateEventW(std::ptr::null(), 0, 0, wide.as_ptr()) };
+        if ev.is_null() {
+            return;
+        }
+        loop {
+            let wait_res = unsafe { WaitForSingleObject(ev, INFINITE) };
+            if wait_res != WAIT_OBJECT_0 {
+                break;
+            }
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                set_pet_visible(&handle, true);
+            });
+        }
+        unsafe {
+            let _ = CloseHandle(ev);
+        }
+    });
+}
+
+#[cfg(unix)]
+fn unix_single_instance_slot() -> &'static Mutex<Option<std::fs::File>> {
+    use std::sync::OnceLock;
+    static SLOT: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn acquire_single_instance_lock(wait_briefly: bool) -> bool {
+    #[cfg(windows)]
+    {
+        let attempts = if wait_briefly { 25 } else { 1 };
+        for i in 0..attempts {
+            match win_try_acquire_named_mutex(WIN_SINGLE_INSTANCE_MUTEX_NAME) {
+                Ok(handle) => {
+                    WINDOWS_SINGLE_INSTANCE_MUTEX.store(handle, Ordering::Relaxed);
+                    return true;
+                }
+                Err(true) => {
+                    if i + 1 < attempts {
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    }
+                    win_signal_existing_instance();
+                    return false;
+                }
+                Err(false) => return true,
+            }
+        }
+        win_signal_existing_instance();
+        false
+    }
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::io::AsRawFd;
+
+        extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+        }
+        const LOCK_EX: i32 = 2;
+        const LOCK_NB: i32 = 4;
+
+        let dir = config::app_data_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let lock_path = dir.join("kurocat.lock");
+        let attempts = if wait_briefly { 25 } else { 1 };
+        for i in 0..attempts {
+            let Ok(file) = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+            else {
+                return true;
+            };
+            let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+            if rc == 0 {
+                if let Ok(mut guard) = unix_single_instance_slot().lock() {
+                    *guard = Some(file);
+                }
+                return true;
+            }
+            if i + 1 < attempts {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        false
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = wait_briefly;
+        true
+    }
+}
+
+pub(crate) fn release_single_instance_lock() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        let raw = WINDOWS_SINGLE_INSTANCE_MUTEX.swap(0, Ordering::AcqRel);
+        if raw != 0 {
+            unsafe {
+                let _ = CloseHandle(raw as HANDLE);
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(mut guard) = unix_single_instance_slot().lock() {
+            *guard = None;
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn linux_configure_display_env() {
     // Prevent WebKitGTK 4.1 DMABUF blank/black transparent window issues on KylinOS/Mesa/NVIDIA/VMs
@@ -2236,9 +2731,29 @@ fn linux_configure_display_env() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Emergency CLI escape hatch: launching with `--unlock` clears click-through lock immediately,
+    // even if an existing instance is already running (its storage watcher reloads within 400ms).
+    let unlock_requested = std::env::args().any(|a| a == "--unlock");
+    if unlock_requested {
+        let mut s = load_settings();
+        if s.click_through_locked {
+            s.click_through_locked = false;
+            save_settings(&s);
+        }
+    }
+
+    #[cfg(windows)]
+    let wait_briefly = win_wait_for_previous_pid_if_requested();
+    #[cfg(not(windows))]
+    let wait_briefly = false;
+
+    if !acquire_single_instance_lock(wait_briefly) {
+        return;
+    }
+
     #[cfg(windows)]
     {
-        win_wait_for_previous_pid_if_requested();
+        win_kill_webview2_children_on_exit();
         win_configure_local_webview2_runtime();
     }
     #[cfg(target_os = "linux")]
@@ -2246,13 +2761,7 @@ pub fn run() {
         linux_configure_display_env();
     }
 
-    let mut initial_settings = load_settings();
-    // Respect persisted `clickThroughLocked` across restarts (Issue #41).
-    // Emergency CLI escape hatch: launching with `--unlock` clears click-through lock immediately.
-    if std::env::args().any(|a| a == "--unlock") && initial_settings.click_through_locked {
-        initial_settings.click_through_locked = false;
-        save_settings(&initial_settings);
-    }
+    let initial_settings = load_settings();
     let settings_arc = Arc::new(Mutex::new(initial_settings.clone()));
     let menu_open = Arc::new(AtomicBool::new(false));
     let menu_creating = Arc::new(AtomicBool::new(false));
@@ -2275,6 +2784,7 @@ pub fn run() {
             menu_open,
             tail_picker_bounds: Arc::new(Mutex::new(None)),
             menu_creating,
+            menu_close_gen: Arc::new(AtomicU64::new(0)),
             menu_opened_at,
             dragging,
             mcp_enabled,
@@ -2291,6 +2801,13 @@ pub fn run() {
             }
 
             if let Some(win) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                {
+                    // On X11, `resizable: false` in tauri.conf.json sets fixed min==max WM size hints,
+                    // causing programmatic `set_size()` calls (e.g. scale < 100%) to be silently ignored (#56).
+                    // Because the window is borderless/undecorated, enabling resizable on Linux adds no frame.
+                    let _ = win.set_resizable(true);
+                }
                 let (win_w, win_h) = window_dimensions(&s.keyboard_layout, s.scale);
                 let _ = win.set_size(Size::Logical(LogicalSize::new(win_w, win_h)));
                 #[cfg(not(target_os = "macos"))]
@@ -2392,13 +2909,26 @@ pub fn run() {
                 paused_for_setup,
             );
             start_storage_watcher(handle.clone());
+            #[cfg(windows)]
+            win_start_single_instance_wake_listener(handle.clone());
             updater::start_background_update_checker(handle.clone());
 
             let http_handle = handle.clone();
+            let agent_handle = handle.clone();
             let mcp_port = if s.mcp_port == 0 { 27420 } else { s.mcp_port };
-            mcp::start_http_mcp_server(mcp_port, mcp_for_setup, move || {
-                reload_and_emit_all(&http_handle);
-            });
+            mcp::start_http_mcp_server(
+                mcp_port,
+                mcp_for_setup,
+                move || {
+                    reload_and_emit_all(&http_handle);
+                },
+                move |ev| {
+                    let _ = agent_handle.emit("kuro-agent-event", &ev);
+                    if let Ok(raw) = serde_json::to_string(&ev) {
+                        obs::broadcast_raw("agentEvent", &raw);
+                    }
+                },
+            );
 
             // Forward settings / cats / privacy broadcasts to OBS SSE clients (1ns no-op when OBS is off)
             handle.listen("kuro-settings", |ev| {
@@ -2459,9 +2989,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            get_resolved_locale,
+            trim_idle_memory,
             get_cats,
             get_game_active,
             get_mcp_config,
+            get_agent_hooks_config,
             get_obs_url,
             get_app_version,
             update_settings,
@@ -2695,5 +3228,69 @@ mod side_menu_layout_tests {
         let json = serde_json::to_string(&s).expect("serialize settings");
         let parsed: crate::config::AppSettings = serde_json::from_str(&json).expect("deserialize settings");
         assert!(parsed.click_through_locked, "clickThroughLocked must round-trip as true");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_job_object_configures_kill_on_close_and_breakaway() {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            assert!(!job.is_null(), "CreateJobObjectW must succeed");
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = super::WIN_JOB_LIMIT_FLAGS;
+            let set_ok = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            assert_ne!(set_ok, 0, "SetInformationJobObject must succeed");
+
+            let mut queried: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            let mut returned = 0u32;
+            let query_ok = QueryInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &mut queried as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                &mut returned,
+            );
+            let _ = CloseHandle(job);
+
+            assert_ne!(query_ok, 0, "QueryInformationJobObject must succeed");
+            let flags = queried.BasicLimitInformation.LimitFlags;
+            assert_ne!(flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
+            assert_ne!(flags & JOB_OBJECT_LIMIT_BREAKAWAY_OK, 0);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn single_instance_mutex_blocks_duplicate_until_released() {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+
+        let name = format!("Local\\KuroCat.UnitTest.Mutex.{}", std::process::id());
+        let first = super::win_try_acquire_named_mutex(&name)
+            .expect("first acquire of fresh named mutex must succeed");
+        assert_eq!(
+            super::win_try_acquire_named_mutex(&name),
+            Err(true),
+            "second acquire while first handle is open must report duplicate"
+        );
+        unsafe {
+            let _ = CloseHandle(first as HANDLE);
+        }
+        let reacquired = super::win_try_acquire_named_mutex(&name)
+            .expect("acquire after closing previous handle must succeed");
+        unsafe {
+            let _ = CloseHandle(reacquired as HANDLE);
+        }
     }
 }

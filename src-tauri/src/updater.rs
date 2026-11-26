@@ -797,10 +797,35 @@ fn download_and_verify_windows(url: &str, dest: &PathBuf, expected_sha256: Optio
     Ok(())
 }
 
+/// Launches a Windows installer or newly-replaced binary detached from our kill-on-close
+/// Job Object (`CREATE_BREAKAWAY_FROM_JOB`) so it survives when the current KuroCat exits.
+/// Falls back to a normal spawn if an outer parent Job Object forbids breakaway.
 #[cfg(windows)]
-fn install_windows_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), String> {
+fn spawn_detached_windows<S: AsRef<std::ffi::OsStr>>(
+    program: &std::path::Path,
+    args: &[S],
+) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+    if crate::win_has_kill_on_close_job() {
+        let mut detached = Command::new(program);
+        detached.args(args).creation_flags(CREATE_BREAKAWAY_FROM_JOB);
+        match detached.spawn() {
+            Ok(child) => return Ok(child),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let mut normal = Command::new(program);
+    normal.args(args);
+    normal.spawn()
+}
+
+#[cfg(windows)]
+fn install_windows_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), String> {
     if info.install_kind == "windows-win7"
         || info
             .asset_name
@@ -852,10 +877,9 @@ fn install_windows_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), Stri
     let is_setup_installer = asset_name.to_ascii_lowercase().ends_with("-setup.exe");
 
     if is_setup_installer {
-        // Launch Tauri NSIS installer in passive auto-relaunch update mode (/P /R /UPDATE)
-        Command::new(&target_file)
-            .args(["/P", "/R", "/UPDATE"])
-            .spawn()
+        // Launch Tauri NSIS installer in passive auto-relaunch update mode (/P /R /UPDATE),
+        // breaking away from our kill-on-close Job Object so it survives `app.exit(0)`.
+        spawn_detached_windows(&target_file, &["/P", "/R", "/UPDATE"])
             .map_err(|e| format!("启动安装程序失败: {}", e))?;
     } else {
         // Zero-PowerShell portable atomic swap: Windows allows renaming a running .exe in place,
@@ -875,24 +899,26 @@ fn install_windows_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), Stri
         }
         let _ = std::fs::remove_file(&target_file);
 
-        if let Err(e) = Command::new(&current_exe)
-            .args([
-                "--wait-pid",
-                &pid.to_string(),
-                "--cleanup-old-exe",
-                &old_exe.to_string_lossy(),
-            ])
-            .spawn()
-        {
+        let pid_str = pid.to_string();
+        let old_exe_str = old_exe.to_string_lossy().into_owned();
+        if let Err(e) = spawn_detached_windows(
+            &current_exe,
+            &["--wait-pid", pid_str.as_str(), "--cleanup-old-exe", old_exe_str.as_str()],
+        ) {
             let _ = std::fs::remove_file(&current_exe);
             let _ = std::fs::rename(&old_exe, &current_exe);
             return Err(format!("启动新版本程序失败: {}", e));
         }
     }
 
+    // Immediately pause hooks, close overlays & release the single-instance lock so the
+    // NSIS installer or restarted portable binary never hits a file/mutex race (#73, #74).
+    crate::input_hook::set_hooks_paused(true);
+    crate::shutdown_pet_windows();
+
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(450));
+        std::thread::sleep(std::time::Duration::from_millis(80));
         app_clone.exit(0);
     });
 
@@ -1036,6 +1062,12 @@ fn install_macos_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), String
          if mv '{src}' '{dst}'; then \
            rm -rf '{dst}.bak' '{tmp}'; \
            /usr/bin/xattr -dr com.apple.quarantine '{dst}' 2>/dev/null || true; \
+           REQ=$(/usr/bin/codesign -d -r- '{dst}' 2>&1 || true); \
+           if printf '%s' \"$REQ\" | /usr/bin/grep -q 'cdhash' && ! printf '%s' \"$REQ\" | /usr/bin/grep -q 'anchor apple'; then \
+             /usr/bin/tccutil reset Accessibility com.kurocat.pet >/dev/null 2>&1 || true; \
+             /usr/bin/tccutil reset ListenEvent com.kurocat.pet >/dev/null 2>&1 || true; \
+             sleep 0.2; \
+           fi; \
            /usr/bin/open -n '{dst}'; \
          else \
            if [ -d '{dst}.bak' ]; then mv '{dst}.bak' '{dst}'; fi; \
@@ -1053,9 +1085,14 @@ fn install_macos_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), String
         .spawn()
         .map_err(|e| format!("启动更新脚本失败: {}", e))?;
 
+    // Immediately pause hooks, close overlays & release the single-instance lock so the
+    // NSIS installer or restarted portable binary never hits a file/mutex race (#73, #74).
+    crate::input_hook::set_hooks_paused(true);
+    crate::shutdown_pet_windows();
+
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(450));
+        std::thread::sleep(std::time::Duration::from_millis(80));
         app_clone.exit(0);
     });
 

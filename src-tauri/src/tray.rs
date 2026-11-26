@@ -1,57 +1,115 @@
 use crate::config::AppSettings;
+use crate::i18n::{platform_click_through_key, t, tf};
 use crate::{
     apply_breed_and_save, apply_keyboard_layout_and_save, apply_keyboard_orientation_and_save,
     apply_scale_and_save, apply_tail_key_mode_and_save, is_pet_visible, reset_window_position,
     set_pet_always_on_top, set_pet_visible, shutdown_pet_windows, AppState,
 };
+use std::sync::{Mutex, OnceLock};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager, Wry};
 
-fn default_tray_tooltip() -> &'static str {
+#[derive(Clone)]
+struct TrayCheckHandles {
+    pause_guard: CheckMenuItem<Wry>,
+    click_through: CheckMenuItem<Wry>,
+    key_bubbles: CheckMenuItem<Wry>,
+    privacy_guard: CheckMenuItem<Wry>,
+    sound_toggle: CheckMenuItem<Wry>,
+    always_on_top: CheckMenuItem<Wry>,
+    autostart: CheckMenuItem<Wry>,
+    obs_toggle: CheckMenuItem<Wry>,
+    obs_hide_pet: CheckMenuItem<Wry>,
+    purr_always: CheckMenuItem<Wry>,
+    mcp_toggle: CheckMenuItem<Wry>,
+    fps_60: CheckMenuItem<Wry>,
+    fps_30: CheckMenuItem<Wry>,
+    lang_auto: CheckMenuItem<Wry>,
+    lang_zh_cn: CheckMenuItem<Wry>,
+    lang_zh_tw: CheckMenuItem<Wry>,
+    lang_en_us: CheckMenuItem<Wry>,
+    lang_ja_jp: CheckMenuItem<Wry>,
+    lang_ko_kr: CheckMenuItem<Wry>,
+}
+
+fn active_handles() -> &'static Mutex<Option<TrayCheckHandles>> {
+    static HANDLES: OnceLock<Mutex<Option<TrayCheckHandles>>> = OnceLock::new();
+    HANDLES.get_or_init(|| Mutex::new(None))
+}
+
+fn default_tray_tooltip(lang: &str) -> String {
     #[cfg(windows)]
     {
         if crate::win_is_elevated() {
-            return "KuroCat（管理员 · 游戏模式就绪）";
+            return t(lang, "tray.tooltip_admin");
         }
     }
-    "KuroCat"
+    t(lang, "tray.tooltip")
 }
 
-pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
+pub fn sync_checkmarks(s: &AppSettings) {
+    if let Ok(guard) = active_handles().lock() {
+        if let Some(h) = guard.as_ref() {
+            let _ = h.click_through.set_checked(s.click_through_locked);
+            let _ = h.key_bubbles.set_checked(s.show_key_bubbles);
+            let _ = h.privacy_guard.set_checked(s.privacy_password_guard);
+            let _ = h.sound_toggle.set_checked(s.sound_enabled);
+            let _ = h.purr_always.set_checked(s.purr_always_on);
+            let _ = h.always_on_top.set_checked(s.always_on_top);
+            let _ = h.autostart.set_checked(s.autostart);
+            let _ = h.obs_toggle.set_checked(s.obs_enabled);
+            let _ = h.obs_hide_pet.set_checked(s.obs_enabled && s.obs_hide_pet);
+            let _ = h.mcp_toggle.set_checked(s.mcp_enabled);
+            let _ = h.fps_30.set_checked(s.fps_cap == 30);
+            let _ = h.fps_60.set_checked(s.fps_cap != 30);
+            let _ = h.lang_auto.set_checked(s.language == "auto");
+            let _ = h.lang_zh_cn.set_checked(s.language == "zh-CN");
+            let _ = h.lang_zh_tw.set_checked(s.language == "zh-TW");
+            let _ = h.lang_en_us.set_checked(s.language == "en-US");
+            let _ = h.lang_ja_jp.set_checked(s.language == "ja-JP");
+            let _ = h.lang_ko_kr.set_checked(s.language == "ko-KR");
+        }
+    }
+}
+
+fn build_tray_menu(
+    app: &AppHandle,
+    initial: &AppSettings,
+    paused: bool,
+) -> tauri::Result<(Menu<Wry>, TrayCheckHandles)> {
+    let lang = initial.language.as_str();
+
     #[cfg(windows)]
     let display_menu = crate::windows_display::create_menu(app)?;
     #[cfg(target_os = "macos")]
     let display_menu = crate::macos_window::create_display_menu(app)?;
-    let toggle_show = MenuItem::with_id(app, "toggle_show", "显示 / 隐藏小黑猫", true, None::<&str>)?;
+
+    let toggle_show = MenuItem::with_id(app, "toggle_show", t(lang, "tray.toggle_show"), true, None::<&str>)?;
     let pause_guard = CheckMenuItem::with_id(
         app,
         "pause_guard",
-        "暂停监听并隐藏（游戏反作弊护航）",
+        t(lang, "tray.pause_guard"),
         true,
-        false,
+        paused,
         None::<&str>,
     )?;
     #[cfg(windows)]
     let restart_as_admin = {
         let elevated = crate::win_is_elevated();
         let label = if elevated {
-            "✓ 已管理员运行（游戏键鼠就绪）"
+            t(lang, "tray.admin_ready")
         } else {
-            "以管理员身份重启（捕获游戏键鼠）"
+            t(lang, "tray.admin_restart")
         };
         MenuItem::with_id(app, "restart_as_admin", label, !elevated, None::<&str>)?
     };
-    let click_through_label = if cfg!(target_os = "macos") {
-        "锁定鼠标穿透（按住 Option 可临时操作）"
-    } else {
-        "锁定鼠标穿透（按住 Alt 可临时操作）"
-    };
+
     let click_through = CheckMenuItem::with_id(
         app,
         "click_through",
-        click_through_label,
+        t(lang, platform_click_through_key()),
         true,
         initial.click_through_locked,
         None::<&str>,
@@ -59,7 +117,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let key_bubbles = CheckMenuItem::with_id(
         app,
         "key_bubbles",
-        "显示悬浮按键气泡",
+        t(lang, "tray.key_bubbles"),
         true,
         initial.show_key_bubbles,
         None::<&str>,
@@ -67,7 +125,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let privacy_guard = CheckMenuItem::with_id(
         app,
         "privacy_guard",
-        "输入密码自动闭眼防偷窥",
+        t(lang, "tray.privacy_guard"),
         true,
         initial.privacy_password_guard,
         None::<&str>,
@@ -75,7 +133,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let sound_toggle = CheckMenuItem::with_id(
         app,
         "sound_toggle",
-        "摸头呼噜声",
+        t(lang, "tray.sound_toggle"),
         true,
         initial.sound_enabled,
         None::<&str>,
@@ -83,7 +141,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let purr_always = CheckMenuItem::with_id(
         app,
         "purr_always",
-        "呼噜声常驻（不摸也小声呼噜）",
+        t(lang, "tray.purr_always"),
         true,
         initial.purr_always_on,
         None::<&str>,
@@ -91,7 +149,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let always_on_top = CheckMenuItem::with_id(
         app,
         "always_on_top",
-        "始终置顶显示",
+        t(lang, "tray.always_on_top"),
         true,
         initial.always_on_top,
         None::<&str>,
@@ -99,7 +157,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
-        "开机自动启动",
+        t(lang, "tray.autostart"),
         true,
         initial.autostart,
         None::<&str>,
@@ -107,7 +165,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let mcp_toggle = CheckMenuItem::with_id(
         app,
         "mcp_toggle",
-        "开启 MCP 扩展服务",
+        t(lang, "tray.mcp_toggle"),
         true,
         initial.mcp_enabled,
         None::<&str>,
@@ -117,7 +175,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let obs_toggle = CheckMenuItem::with_id(
         app,
         "obs_toggle",
-        format!("开启 OBS 透明直播源 (127.0.0.1:{})", obs_port),
+        tf(lang, "tray.obs_toggle", &[("port", obs_port.to_string())]),
         true,
         initial.obs_enabled,
         None::<&str>,
@@ -125,7 +183,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let obs_hide_pet = CheckMenuItem::with_id(
         app,
         "obs_hide_pet",
-        "仅 OBS 显示（隐藏桌面猫）",
+        t(lang, "tray.obs_hide_pet"),
         true,
         initial.obs_enabled && initial.obs_hide_pet,
         None::<&str>,
@@ -133,27 +191,27 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let obs_open_browser = MenuItem::with_id(
         app,
         "obs_open_browser",
-        "在浏览器中预览 OBS 透明源",
+        t(lang, "tray.obs_open_browser"),
         true,
         None::<&str>,
     )?;
     let obs_menu = Submenu::with_items(
         app,
-        "OBS 透明直播源",
+        t(lang, "tray.obs_menu"),
         true,
         &[&obs_toggle, &obs_hide_pet, &obs_open_browser],
     )?;
 
-    let breed_black = MenuItem::with_id(app, "breed_black", "经典小黑猫", true, None::<&str>)?;
-    let breed_ragdoll = MenuItem::with_id(app, "breed_ragdoll", "暖奶茶布偶猫", true, None::<&str>)?;
-    let breed_orange = MenuItem::with_id(app, "breed_orange", "大橘猫（虎斑）", true, None::<&str>)?;
-    let breed_calico = MenuItem::with_id(app, "breed_calico", "三花猫", true, None::<&str>)?;
-    let breed_tuxedo = MenuItem::with_id(app, "breed_tuxedo", "奶牛猫", true, None::<&str>)?;
-    let breed_siamese = MenuItem::with_id(app, "breed_siamese", "暹罗猫", true, None::<&str>)?;
-    let breed_dafeiyu = MenuItem::with_id(app, "breed_dafeiyu", "🐳 大肥鱼（鲸鱼娘）", true, None::<&str>)?;
+    let breed_black = MenuItem::with_id(app, "breed_black", t(lang, "breeds.black"), true, None::<&str>)?;
+    let breed_ragdoll = MenuItem::with_id(app, "breed_ragdoll", t(lang, "breeds.ragdoll"), true, None::<&str>)?;
+    let breed_orange = MenuItem::with_id(app, "breed_orange", t(lang, "breeds.orange-tabby"), true, None::<&str>)?;
+    let breed_calico = MenuItem::with_id(app, "breed_calico", t(lang, "breeds.calico"), true, None::<&str>)?;
+    let breed_tuxedo = MenuItem::with_id(app, "breed_tuxedo", t(lang, "breeds.tuxedo"), true, None::<&str>)?;
+    let breed_siamese = MenuItem::with_id(app, "breed_siamese", t(lang, "breeds.siamese"), true, None::<&str>)?;
+    let breed_dafeiyu = MenuItem::with_id(app, "breed_dafeiyu", t(lang, "breeds.dafeiyu"), true, None::<&str>)?;
     let breed_menu = Submenu::with_items(
         app,
-        "角色外观",
+        t(lang, "tray.breed_menu"),
         true,
         &[
             &breed_black,
@@ -166,41 +224,41 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         ],
     )?;
 
-    let scale_25 = MenuItem::with_id(app, "scale_25", "25%（迷你）", true, None::<&str>)?;
-    let scale_50 = MenuItem::with_id(app, "scale_50", "50%（小巧）", true, None::<&str>)?;
-    let scale_75 = MenuItem::with_id(app, "scale_75", "75%（适中）", true, None::<&str>)?;
-    let scale_100 = MenuItem::with_id(app, "scale_100", "100%（默认）", true, None::<&str>)?;
-    let scale_125 = MenuItem::with_id(app, "scale_125", "125%（偏大）", true, None::<&str>)?;
-    let scale_150 = MenuItem::with_id(app, "scale_150", "150%（大号）", true, None::<&str>)?;
+    let scale_25 = MenuItem::with_id(app, "scale_25", t(lang, "tray.scale_25"), true, None::<&str>)?;
+    let scale_50 = MenuItem::with_id(app, "scale_50", t(lang, "tray.scale_50"), true, None::<&str>)?;
+    let scale_75 = MenuItem::with_id(app, "scale_75", t(lang, "tray.scale_75"), true, None::<&str>)?;
+    let scale_100 = MenuItem::with_id(app, "scale_100", t(lang, "tray.scale_100"), true, None::<&str>)?;
+    let scale_125 = MenuItem::with_id(app, "scale_125", t(lang, "tray.scale_125"), true, None::<&str>)?;
+    let scale_150 = MenuItem::with_id(app, "scale_150", t(lang, "tray.scale_150"), true, None::<&str>)?;
     let scale_menu = Submenu::with_items(
         app,
-        "缩放大小",
+        t(lang, "tray.scale_menu"),
         true,
         &[&scale_25, &scale_50, &scale_75, &scale_100, &scale_125, &scale_150],
     )?;
 
-    let kb_65 = MenuItem::with_id(app, "kb_65", "65% 紧凑键盘", true, None::<&str>)?;
-    let kb_98 = MenuItem::with_id(app, "kb_98", "98 键（保留小键盘 · 紧凑）", true, None::<&str>)?;
-    let kb_108 = MenuItem::with_id(app, "kb_108", "108 键全尺寸（含小键盘）", true, None::<&str>)?;
+    let kb_65 = MenuItem::with_id(app, "kb_65", t(lang, "tray.kb_65"), true, None::<&str>)?;
+    let kb_98 = MenuItem::with_id(app, "kb_98", t(lang, "tray.kb_98"), true, None::<&str>)?;
+    let kb_108 = MenuItem::with_id(app, "kb_108", t(lang, "tray.kb_108"), true, None::<&str>)?;
     let kb_sep = PredefinedMenuItem::separator(app)?;
-    let kb_cat = MenuItem::with_id(app, "kb_cat", "面向猫咪（180° 真实视角）", true, None::<&str>)?;
-    let kb_viewer = MenuItem::with_id(app, "kb_viewer", "面向观众（正向字母易读）", true, None::<&str>)?;
+    let kb_cat = MenuItem::with_id(app, "kb_cat", t(lang, "tray.kb_cat"), true, None::<&str>)?;
+    let kb_viewer = MenuItem::with_id(app, "kb_viewer", t(lang, "tray.kb_viewer"), true, None::<&str>)?;
     let kb_menu = Submenu::with_items(
         app,
-        "键盘配列与方向",
+        t(lang, "tray.kb_menu"),
         true,
         &[&kb_65, &kb_98, &kb_108, &kb_sep, &kb_cat, &kb_viewer],
     )?;
 
-    let tail_smart = MenuItem::with_id(app, "tail_smart", "智能第三只手（忙时出尾）", true, None::<&str>)?;
-    let tail_custom = MenuItem::with_id(app, "tail_custom", "自定义尾巴按键", true, None::<&str>)?;
-    let tail_edge = MenuItem::with_id(app, "tail_edge", "近尾边缘区（不拆 WASD）", true, None::<&str>)?;
-    let tail_off = MenuItem::with_id(app, "tail_off", "仅摆动不拍键", true, None::<&str>)?;
+    let tail_smart = MenuItem::with_id(app, "tail_smart", t(lang, "tray.tail_smart"), true, None::<&str>)?;
+    let tail_custom = MenuItem::with_id(app, "tail_custom", t(lang, "tray.tail_custom"), true, None::<&str>)?;
+    let tail_edge = MenuItem::with_id(app, "tail_edge", t(lang, "tray.tail_edge"), true, None::<&str>)?;
+    let tail_off = MenuItem::with_id(app, "tail_off", t(lang, "tray.tail_off"), true, None::<&str>)?;
     let tail_sep = PredefinedMenuItem::separator(app)?;
-    let tail_pick = MenuItem::with_id(app, "tail_pick_keys", "🐾 在键盘上点选尾巴按键…", true, None::<&str>)?;
+    let tail_pick = MenuItem::with_id(app, "tail_pick_keys", t(lang, "tray.tail_pick"), true, None::<&str>)?;
     let tail_menu = Submenu::with_items(
         app,
-        "尾巴拍键模式",
+        t(lang, "tray.tail_menu"),
         true,
         &[
             &tail_smart,
@@ -212,23 +270,56 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         ],
     )?;
 
-    let reset_pos = MenuItem::with_id(app, "reset_pos", "重置位置到右下角", true, None::<&str>)?;
+    let fps_60 = CheckMenuItem::with_id(app, "fps_60", t(lang, "tray.fps_60"), true, initial.fps_cap != 30, None::<&str>)?;
+    let fps_30 = CheckMenuItem::with_id(app, "fps_30", t(lang, "tray.fps_30"), true, initial.fps_cap == 30, None::<&str>)?;
+    let fps_menu = Submenu::with_items(app, t(lang, "tray.fps_menu"), true, &[&fps_60, &fps_30])?;
+
+    let lang_auto = CheckMenuItem::with_id(app, "lang_auto", t(lang, "tray.lang_auto"), true, initial.language == "auto", None::<&str>)?;
+    let lang_sep = PredefinedMenuItem::separator(app)?;
+    let lang_zh_cn = CheckMenuItem::with_id(app, "lang_zh-CN", "简体中文", true, initial.language == "zh-CN", None::<&str>)?;
+    let lang_zh_tw = CheckMenuItem::with_id(app, "lang_zh-TW", "繁體中文", true, initial.language == "zh-TW", None::<&str>)?;
+    let lang_en_us = CheckMenuItem::with_id(app, "lang_en-US", "English", true, initial.language == "en-US", None::<&str>)?;
+    let lang_ja_jp = CheckMenuItem::with_id(app, "lang_ja-JP", "日本語", true, initial.language == "ja-JP", None::<&str>)?;
+    let lang_ko_kr = CheckMenuItem::with_id(app, "lang_ko-KR", "한국어", true, initial.language == "ko-KR", None::<&str>)?;
+    let lang_menu = Submenu::with_items(
+        app,
+        t(lang, "tray.lang_menu"),
+        true,
+        &[
+            &lang_auto,
+            &lang_sep,
+            &lang_zh_cn,
+            &lang_zh_tw,
+            &lang_en_us,
+            &lang_ja_jp,
+            &lang_ko_kr,
+        ],
+    )?;
+
+    let reset_pos = MenuItem::with_id(app, "reset_pos", t(lang, "tray.reset_pos"), true, None::<&str>)?;
     #[cfg(windows)]
     let desktop_shortcut =
-        MenuItem::with_id(app, "desktop_shortcut", "创建桌面快捷方式 (KuroCat)", true, None::<&str>)?;
+        MenuItem::with_id(app, "desktop_shortcut", t(lang, "tray.desktop_shortcut"), true, None::<&str>)?;
     #[cfg(target_os = "macos")]
     let mac_input_menu = {
+        let mac_reset_perms = MenuItem::with_id(
+            app,
+            "mac_reset_permissions",
+            t(lang, "tray.mac_reset_perms"),
+            true,
+            None::<&str>,
+        )?;
         let mac_reconnect = MenuItem::with_id(
             app,
             "mac_reconnect_input",
-            "重新连接键盘监听（兼容 Karabiner）",
+            t(lang, "tray.mac_reconnect"),
             true,
             None::<&str>,
         )?;
         let mac_diag = MenuItem::with_id(
             app,
             "mac_diagnose_input",
-            "查看键盘监听与权限诊断",
+            t(lang, "tray.mac_diag"),
             true,
             None::<&str>,
         )?;
@@ -236,22 +327,23 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         let mac_open_listen = MenuItem::with_id(
             app,
             "mac_open_input_monitoring",
-            "打开「输入监控」隐私设置",
+            t(lang, "tray.mac_open_listen"),
             true,
             None::<&str>,
         )?;
         let mac_open_ax = MenuItem::with_id(
             app,
             "mac_open_accessibility",
-            "打开「辅助功能」隐私设置",
+            t(lang, "tray.mac_open_ax"),
             true,
             None::<&str>,
         )?;
         Submenu::with_items(
             app,
-            "键盘监听与权限",
+            t(lang, "tray.mac_input_menu"),
             true,
             &[
+                &mac_reset_perms,
                 &mac_reconnect,
                 &mac_diag,
                 &mac_sep,
@@ -263,11 +355,15 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let check_update = MenuItem::with_id(
         app,
         "check_update",
-        format!("检查更新 (v{})", crate::updater::CURRENT_VERSION),
+        tf(
+            lang,
+            "tray.check_update",
+            &[("ver", crate::updater::CURRENT_VERSION.to_string())],
+        ),
         true,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "退出 KuroCat", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", t(lang, "tray.quit"), true, None::<&str>)?;
 
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
@@ -290,6 +386,8 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &kb_menu,
             &tail_menu,
             &scale_menu,
+            &fps_menu,
+            &lang_menu,
             &desktop_shortcut,
             &display_menu,
             &reset_pos,
@@ -319,6 +417,8 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &kb_menu,
             &tail_menu,
             &scale_menu,
+            &fps_menu,
+            &lang_menu,
             &mac_input_menu,
             &display_menu,
             &reset_pos,
@@ -348,6 +448,8 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &kb_menu,
             &tail_menu,
             &scale_menu,
+            &fps_menu,
+            &lang_menu,
             &reset_pos,
             &autostart,
             &obs_menu,
@@ -358,40 +460,93 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         ],
     )?;
 
+    let handles = TrayCheckHandles {
+        pause_guard,
+        click_through,
+        key_bubbles,
+        privacy_guard,
+        sound_toggle,
+        always_on_top,
+        autostart,
+        obs_toggle,
+        obs_hide_pet,
+        purr_always,
+        mcp_toggle,
+        fps_60,
+        fps_30,
+        lang_auto,
+        lang_zh_cn,
+        lang_zh_tw,
+        lang_en_us,
+        lang_ja_jp,
+        lang_ko_kr,
+    };
+
+    Ok((menu, handles))
+}
+
+pub fn refresh_tray_language(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings.lock().unwrap().clone();
+    let paused = state.paused_guard.load(std::sync::atomic::Ordering::SeqCst);
+    if let Ok((new_menu, new_handles)) = build_tray_menu(app, &settings, paused) {
+        if let Ok(mut guard) = active_handles().lock() {
+            *guard = Some(new_handles);
+        }
+        if let Some(tray) = app.tray_by_id("kuro-tray") {
+            let _ = tray.set_menu(Some(new_menu));
+            let tip = if paused {
+                format!("KuroCat ({})", t(&settings.language, "tray.pause_guard"))
+            } else {
+                default_tray_tooltip(&settings.language)
+            };
+            let _ = tray.set_tooltip(Some(tip));
+        }
+    }
+}
+
+fn apply_language_and_save(app: &AppHandle, raw_lang: &str) {
+    let state = app.state::<AppState>();
+    let updated = {
+        let mut s = state.settings.lock().unwrap();
+        s.language = crate::config::normalize_language(raw_lang);
+        crate::config::save_settings(&s);
+        s.clone()
+    };
+    refresh_tray_language(app);
+    let _ = app.emit("kuro-settings", updated);
+}
+
+fn apply_fps_cap_and_save(app: &AppHandle, cap: u16) {
+    let state = app.state::<AppState>();
+    let updated = {
+        let mut s = state.settings.lock().unwrap();
+        s.fps_cap = crate::config::normalize_fps_cap(cap);
+        crate::config::save_settings(&s);
+        s.clone()
+    };
+    sync_checkmarks(&updated);
+    let _ = app.emit("kuro-settings", updated);
+}
+
+pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
+    let (menu, handles) = build_tray_menu(app, initial, false)?;
+    if let Ok(mut guard) = active_handles().lock() {
+        *guard = Some(handles);
+    }
+
     let icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
-    let pause_guard_for_click = pause_guard.clone();
 
     // Keep tray checkmarks synchronized when settings change from right-click menu, toast, or MCP.
-    {
-        let ct = click_through.clone();
-        let kb = key_bubbles.clone();
-        let pg = privacy_guard.clone();
-        let st = sound_toggle.clone();
-        let pa = purr_always.clone();
-        let aot = always_on_top.clone();
-        let auto = autostart.clone();
-        let ot = obs_toggle.clone();
-        let oh = obs_hide_pet.clone();
-        let mt = mcp_toggle.clone();
-        app.listen("kuro-settings", move |ev| {
-            if let Ok(s) = serde_json::from_str::<AppSettings>(ev.payload()) {
-                let _ = ct.set_checked(s.click_through_locked);
-                let _ = kb.set_checked(s.show_key_bubbles);
-                let _ = pg.set_checked(s.privacy_password_guard);
-                let _ = st.set_checked(s.sound_enabled);
-                let _ = pa.set_checked(s.purr_always_on);
-                let _ = aot.set_checked(s.always_on_top);
-                let _ = auto.set_checked(s.autostart);
-                let _ = ot.set_checked(s.obs_enabled);
-                let _ = oh.set_checked(s.obs_enabled && s.obs_hide_pet);
-                let _ = mt.set_checked(s.mcp_enabled);
-            }
-        });
-    }
+    app.listen("kuro-settings", move |ev| {
+        if let Ok(s) = serde_json::from_str::<AppSettings>(ev.payload()) {
+            sync_checkmarks(&s);
+        }
+    });
 
     TrayIconBuilder::with_id("kuro-tray")
         .icon(icon)
-        .tooltip(default_tray_tooltip())
+        .tooltip(default_tray_tooltip(&initial.language))
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_tray_icon_event(move |tray, event| {
@@ -408,8 +563,13 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                         .paused_guard
                         .store(false, std::sync::atomic::Ordering::SeqCst);
                     crate::input_hook::set_hooks_paused(false);
-                    let _ = pause_guard_for_click.set_checked(false);
-                    let _ = tray.set_tooltip(Some(default_tray_tooltip()));
+                    if let Ok(guard) = active_handles().lock() {
+                        if let Some(h) = guard.as_ref() {
+                            let _ = h.pause_guard.set_checked(false);
+                        }
+                    }
+                    let lang = state.settings.lock().unwrap().language.clone();
+                    let _ = tray.set_tooltip(Some(default_tray_tooltip(&lang)));
                     set_pet_visible(app, true);
                 } else {
                     let vis = is_pet_visible(app);
@@ -426,9 +586,14 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                             .paused_guard
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         crate::input_hook::set_hooks_paused(false);
-                        let _ = pause_guard.set_checked(false);
+                        if let Ok(guard) = active_handles().lock() {
+                            if let Some(h) = guard.as_ref() {
+                                let _ = h.pause_guard.set_checked(false);
+                            }
+                        }
+                        let lang = state.settings.lock().unwrap().language.clone();
                         if let Some(tray) = app.tray_by_id("kuro-tray") {
-                            let _ = tray.set_tooltip(Some(default_tray_tooltip()));
+                            let _ = tray.set_tooltip(Some(default_tray_tooltip(&lang)));
                         }
                         set_pet_visible(app, true);
                     } else {
@@ -438,7 +603,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                             if s.obs_hide_pet {
                                 s.obs_hide_pet = false;
                                 crate::config::save_settings(&s);
-                                let _ = obs_hide_pet.set_checked(false);
+                                sync_checkmarks(&s);
                                 let _ = app.emit("kuro-settings", s.clone());
                             }
                         }
@@ -453,12 +618,17 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                         .paused_guard
                         .store(next, std::sync::atomic::Ordering::SeqCst);
                     crate::input_hook::set_hooks_paused(next);
-                    let _ = pause_guard.set_checked(next);
+                    if let Ok(guard) = active_handles().lock() {
+                        if let Some(h) = guard.as_ref() {
+                            let _ = h.pause_guard.set_checked(next);
+                        }
+                    }
+                    let lang = state.settings.lock().unwrap().language.clone();
                     if let Some(tray) = app.tray_by_id("kuro-tray") {
                         let tip = if next {
-                            "KuroCat（已暂停监听 · 反作弊护航中）"
+                            format!("KuroCat ({})", t(&lang, "tray.pause_guard"))
                         } else {
-                            default_tray_tooltip()
+                            default_tray_tooltip(&lang)
                         };
                         let _ = tray.set_tooltip(Some(tip));
                     }
@@ -471,36 +641,44 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     }
                 }
                 "click_through" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.click_through_locked = !s.click_through_locked;
-                    let locked = s.click_through_locked;
-                    crate::config::save_settings(&s);
-                    let _ = click_through.set_checked(locked);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.click_through_locked = !s.click_through_locked;
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "key_bubbles" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.show_key_bubbles = !s.show_key_bubbles;
-                    let enabled = s.show_key_bubbles;
-                    crate::config::save_settings(&s);
-                    let _ = key_bubbles.set_checked(enabled);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.show_key_bubbles = !s.show_key_bubbles;
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "privacy_guard" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.privacy_password_guard = !s.privacy_password_guard;
-                    let enabled = s.privacy_password_guard;
-                    crate::config::save_settings(&s);
-                    let _ = privacy_guard.set_checked(enabled);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.privacy_password_guard = !s.privacy_password_guard;
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "sound_toggle" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.sound_enabled = !s.sound_enabled;
-                    let enabled = s.sound_enabled;
-                    crate::config::save_settings(&s);
-                    let _ = sound_toggle.set_checked(enabled);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.sound_enabled = !s.sound_enabled;
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "purr_always" => {
                     let mut s = state.settings.lock().unwrap();
@@ -518,7 +696,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                         crate::config::save_settings(&s);
                         (on_top, s.clone())
                     };
-                    let _ = always_on_top.set_checked(on_top);
+                    sync_checkmarks(&updated);
                     set_pet_always_on_top(app, on_top);
                     let _ = app.emit("kuro-settings", updated);
                 }
@@ -528,8 +706,10 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     if crate::config::set_windows_autostart(next).is_ok() {
                         s.autostart = next;
                         crate::config::save_settings(&s);
-                        let _ = autostart.set_checked(next);
-                        let _ = app.emit("kuro-settings", s.clone());
+                        let updated = s.clone();
+                        drop(s);
+                        sync_checkmarks(&updated);
+                        let _ = app.emit("kuro-settings", updated);
                     }
                 }
                 "obs_toggle" => {
@@ -546,12 +726,9 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                         (s.obs_enabled, s.obs_port, s.clone())
                     };
                     crate::obs::sync_obs_server(app, enabled, port);
-                    let _ = obs_toggle.set_checked(enabled);
-                    if !enabled {
-                        let _ = obs_hide_pet.set_checked(false);
-                        if !state.paused_guard.load(std::sync::atomic::Ordering::Relaxed) {
-                            set_pet_visible(app, true);
-                        }
+                    sync_checkmarks(&updated);
+                    if !enabled && !state.paused_guard.load(std::sync::atomic::Ordering::Relaxed) {
+                        set_pet_visible(app, true);
                     }
                     let _ = app.emit("kuro-settings", updated);
                 }
@@ -570,8 +747,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                         (next_hide, s.obs_port, s.clone())
                     };
                     crate::obs::sync_obs_server(app, updated.obs_enabled, port);
-                    let _ = obs_toggle.set_checked(updated.obs_enabled);
-                    let _ = obs_hide_pet.set_checked(hide_now);
+                    sync_checkmarks(&updated);
                     if !state.paused_guard.load(std::sync::atomic::Ordering::Relaxed) {
                         set_pet_visible(app, !hide_now);
                     }
@@ -592,21 +768,24 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     };
                     crate::obs::sync_obs_server(app, true, port);
                     if enabled_changed {
-                        let _ = obs_toggle.set_checked(true);
+                        sync_checkmarks(&updated);
                         let _ = app.emit("kuro-settings", updated);
                     }
                     crate::updater::open_url_in_browser(&crate::obs::obs_url(port));
                 }
                 "mcp_toggle" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.mcp_enabled = !s.mcp_enabled;
-                    let enabled = s.mcp_enabled;
-                    state
-                        .mcp_enabled
-                        .store(enabled, std::sync::atomic::Ordering::Relaxed);
-                    crate::config::save_settings(&s);
-                    let _ = mcp_toggle.set_checked(enabled);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.mcp_enabled = !s.mcp_enabled;
+                        let enabled = s.mcp_enabled;
+                        state
+                            .mcp_enabled
+                            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "breed_black" => apply_breed_and_save(app, "black"),
                 "breed_ragdoll" => apply_breed_and_save(app, "ragdoll"),
@@ -634,8 +813,20 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     set_pet_visible(app, true);
                     let _ = app.emit("kuro-open-tail-picker", ());
                 }
+                "fps_60" => apply_fps_cap_and_save(app, 0),
+                "fps_30" => apply_fps_cap_and_save(app, 30),
+                "lang_auto" => apply_language_and_save(app, "auto"),
+                "lang_zh-CN" => apply_language_and_save(app, "zh-CN"),
+                "lang_zh-TW" => apply_language_and_save(app, "zh-TW"),
+                "lang_en-US" => apply_language_and_save(app, "en-US"),
+                "lang_ja-JP" => apply_language_and_save(app, "ja-JP"),
+                "lang_ko-KR" => apply_language_and_save(app, "ko-KR"),
                 "desktop_shortcut" => {
                     let _ = crate::config::create_desktop_shortcut();
+                }
+                #[cfg(target_os = "macos")]
+                "mac_reset_permissions" => {
+                    crate::input_hook::macos_hook::reset_and_request_macos_permissions();
                 }
                 #[cfg(target_os = "macos")]
                 "mac_reconnect_input" => {
@@ -655,21 +846,28 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                 }
                 "check_update" => {
                     let app_clone = app.clone();
+                    let lang = state.settings.lock().unwrap().language.clone();
                     set_pet_visible(app, true);
                     let _ = app_clone.emit(
                         "kuro-update-status",
                         crate::updater::UpdateProgressEvent {
                             stage: "checking".to_string(),
-                            message: "正在检查新版本...".to_string(),
+                            message: t(&lang, "toast.checking"),
                             info: None,
                         },
                     );
                     std::thread::spawn(move || match crate::updater::check_latest_update() {
                         Ok(info) => {
                             let (stage, msg) = if info.has_update {
-                                ("available", format!("发现新版本 v{}", info.latest_version))
+                                (
+                                    "available",
+                                    tf(&lang, "toast.available", &[("ver", info.latest_version.clone())]),
+                                )
                             } else {
-                                ("up_to_date", format!("已是最新版本 v{}", info.current_version))
+                                (
+                                    "up_to_date",
+                                    tf(&lang, "toast.up_to_date", &[("ver", info.current_version.clone())]),
+                                )
                             };
                             let _ = app_clone.emit(
                                 "kuro-update-status",

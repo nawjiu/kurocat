@@ -42,6 +42,8 @@ class CatAudio {
   private squeakMinTimer: number | null = null;
   private squeakStartedAt = 0;
   private squeakListeners = new Set<(active: boolean) => void>();
+  private deviceWatcherAttached = false;
+  private rebuildTimer: number | null = null;
 
   /** 注册「是否正在哼唧」的回调（猫猫的眼睛要用它来变妩媚） */
   public onSqueakChange(cb: (active: boolean) => void): void {
@@ -62,6 +64,96 @@ class CatAudio {
     }
   }
 
+
+  /**
+   * 输出设备变化（插耳机 / 蓝牙耳机连接）会把 WebView2 的音频流掐掉：
+   * ctx 还报告 running，但实际渲染进虚空。趁默认设备换代时重建整张图，不用重启就能把呼噜救回来。
+   */
+  private attachDeviceWatcher(): void {
+    if (this.deviceWatcherAttached) return;
+    const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+    if (!media || typeof media.addEventListener !== 'function') return;
+    media.addEventListener('devicechange', () => this.scheduleRebuild());
+    this.deviceWatcherAttached = true;
+  }
+
+  private scheduleRebuild(): void {
+    // 蓝牙耳机在 A2DP/HFP 之间切换会连发好几次 devicechange，合并成一次重建
+    if (this.rebuildTimer !== null) return;
+    this.rebuildTimer = window.setTimeout(() => {
+      this.rebuildTimer = null;
+      this.rebuild();
+    }, 280);
+  }
+
+  private teardownGraph(): void {
+    this.cancelStop();
+    const ctx = this.ctx;
+    const loop = this.loopSource;
+    this.loopSource = null;
+    if (loop) {
+      try {
+        loop.stop();
+      } catch {
+        // 已经停了
+      }
+      try {
+        loop.disconnect();
+      } catch {
+        // 已经断开
+      }
+    }
+    const squeak = this.squeakSource;
+    const squeakGain = this.squeakGain;
+    this.squeakSource = null;
+    this.squeakGain = null;
+    this.squeakStartedAt = 0;
+    if (squeak) {
+      try {
+        squeak.stop();
+      } catch {
+        // 已经停了
+      }
+      try {
+        squeak.disconnect();
+      } catch {
+        // 已经断开
+      }
+    }
+    if (squeakGain) {
+      try {
+        squeakGain.disconnect();
+      } catch {
+        // 已经断开
+      }
+    }
+    if (this.master) {
+      try {
+        this.master.disconnect();
+      } catch {
+        // 已经断开
+      }
+    }
+    this.master = null;
+    this.graphReady = false;
+    this.appliedLevel = 0;
+    this.ctx = null;
+    if (ctx) {
+      ctx.onstatechange = null;
+      void ctx.close().catch(() => {});
+    }
+  }
+
+  /** 设备换了：拆图重建，把正在响的呼噜 / 哼唧接着放出来 */
+  private rebuild(): void {
+    if (!this.ctx) return;
+    const resumeSqueak = this.squeakSource !== null && this.squeakHeld;
+    this.teardownGraph();
+    if (this.currentTarget() > 0.001) {
+      this.applyLevel();
+    }
+    if (resumeSqueak) void this.playSqueakLoop();
+  }
 
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
@@ -258,6 +350,55 @@ class CatAudio {
     this.applyLevel();
   }
 
+  /**
+   * AI 伙伴（Agent Companion）的软提示音：done / waiting / error。
+   * 跟随总开关，用完即弃，不留常驻节点。
+   */
+  public playAgentNotice(kind: 'done' | 'waiting' | 'error'): void {
+    if (!this.enabled) return;
+    if (!this.ensureContext()) return;
+    const ctx = this.ctx as AudioContext;
+    if (ctx.state === 'suspended') {
+      void ctx.resume().catch(() => {});
+    }
+
+    const notes: Array<{ freq: number; delay: number; dur: number; gain: number }> =
+      kind === 'done'
+        ? [
+            { freq: 587.33, delay: 0.0, dur: 0.16, gain: 0.085 },
+            { freq: 880.0, delay: 0.095, dur: 0.24, gain: 0.095 },
+          ]
+        : kind === 'waiting'
+          ? [{ freq: 659.25, delay: 0.0, dur: 0.22, gain: 0.075 }]
+          : [
+              { freq: 311.13, delay: 0.0, dur: 0.14, gain: 0.075 },
+              { freq: 246.94, delay: 0.11, dur: 0.2, gain: 0.075 },
+            ];
+
+    const t0 = ctx.currentTime + 0.01;
+    for (const n of notes) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = kind === 'error' ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(n.freq, t0 + n.delay);
+      g.gain.setValueAtTime(0.0001, t0 + n.delay);
+      g.gain.linearRampToValueAtTime(n.gain, t0 + n.delay + 0.018);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + n.delay + n.dur);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t0 + n.delay);
+      osc.stop(t0 + n.delay + n.dur + 0.02);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          g.disconnect();
+        } catch {
+          // ignore
+        }
+      };
+    }
+  }
+
   /** 目标音量：常驻模式给一个底噪，抚摸强度越高越响 */
   private currentTarget(): number {
     if (!this.enabled) return 0;
@@ -356,6 +497,15 @@ class CatAudio {
     polish.connect(ctx.destination);
     this.master = master;
     this.graphReady = true;
+
+    // 设备被拔掉 / 系统音频重置会把 ctx 弄死：主动重建，别一直哑着等到下次重启
+    const watched = ctx;
+    ctx.onstatechange = () => {
+      if (this.ctx !== watched) return;
+      const state = watched.state as string;
+      if (state === 'closed' || state === 'interrupted') this.scheduleRebuild();
+    };
+    this.attachDeviceWatcher();
 
     if (this.sampleBuffer) {
       this.startSampleLoop();

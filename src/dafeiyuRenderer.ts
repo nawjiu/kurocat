@@ -12,6 +12,7 @@ export interface DaFeiYuLayout {
   kbTiltRad: number;
   mouseBtnX: number;
   mouseBtnY: number;
+  cursor: { x: number; y: number } | null;
   mouseNX: number;
   mouseLeft: boolean;
   mouseRight: boolean;
@@ -58,7 +59,7 @@ interface FloatingParticle {
  * support, and adorable hands-covering-eyes password privacy mode.
  */
 export class DaFeiYuRenderer {
-  private sprites: Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement>;
+  private sprites: Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement> | null = null;
   private hairBangsCanvas: HTMLCanvasElement | null = null;
   private hairBangsAttempted = false;
 
@@ -124,17 +125,40 @@ export class DaFeiYuRenderer {
   private particles: FloatingParticle[] = [];
 
   constructor() {
-    const mk = (src: string) => {
-      const img = new Image();
-      img.src = src;
-      return img;
-    };
-    this.sprites = {
-      idle: mk(idleUrl),
-      blink: mk(blinkUrl),
-      shy: mk(shyUrl),
-      happy: mk(happyUrl),
-    };
+    // Sprites are lazy-loaded on first render so default cat skins never decode 4 PNGs into RAM.
+  }
+
+  private ensureSprites(): Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement> {
+    if (!this.sprites) {
+      const mk = (src: string) => {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = src;
+        return img;
+      };
+      this.sprites = {
+        idle: mk(idleUrl),
+        blink: mk(blinkUrl),
+        shy: mk(shyUrl),
+        happy: mk(happyUrl),
+      };
+    }
+    return this.sprites;
+  }
+
+  public releaseSprites(): void {
+    if (this.sprites) {
+      for (const img of Object.values(this.sprites)) {
+        img.src = '';
+      }
+      this.sprites = null;
+    }
+    if (this.hairBangsCanvas) {
+      this.hairBangsCanvas.width = 0;
+      this.hairBangsCanvas.height = 0;
+      this.hairBangsCanvas = null;
+    }
+    this.hairBangsAttempted = false;
   }
 
   public onPrivacyModeChanged(active: boolean): void {
@@ -382,7 +406,7 @@ export class DaFeiYuRenderer {
     this.bodyTiltVel += tiltAcc * dt;
     this.bodyTilt += this.bodyTiltVel * dt;
 
-    // 2a) Live2D eye gaze tracking toward active mouse click / keyboard key / whale-tail slap!
+    // 2a) Follow the pointer between glances at keys and tail slap targets.
     const lastClickTs = Math.max(this.lastMouseClickAt, layout.mouseClickAt || -10000);
     const activeMouseClick =
       !layout.privacyMode &&
@@ -396,40 +420,29 @@ export class DaFeiYuRenderer {
         this.rightHand.heldVks.size > 0 ||
         this.tail.heldVks.size > 0);
 
-    let gazeTx = 0;
-    let gazeTy = 0;
-    let hasActiveLookTarget = false;
-    let targetWX = 0;
-    let targetWY = 0;
-
-    if (activeMouseClick && (!activeKeyGaze || lastClickTs >= this.lastKeyGazeAt)) {
-      hasActiveLookTarget = true;
-      targetWX = layout.mouseBtnX;
-      targetWY = layout.mouseBtnY;
-    } else if (activeKeyGaze) {
-      hasActiveLookTarget = true;
-      targetWX = this.lastKeyPtX;
-      targetWY = this.lastKeyPtY;
-    } else if (mouseMode) {
-      hasActiveLookTarget = true;
-      targetWX = layout.mouseBtnX;
-      targetWY = layout.mouseBtnY;
+    let gazeTarget = !layout.privacyMode && !isHappy ? layout.cursor : null;
+    if (activeKeyGaze && (!activeMouseClick || this.lastKeyGazeAt > lastClickTs)) {
+      gazeTarget = { x: this.lastKeyPtX, y: this.lastKeyPtY };
+    } else if (!gazeTarget && (activeMouseClick || mouseMode)) {
+      gazeTarget = { x: layout.mouseBtnX, y: layout.mouseBtnY };
     }
 
-    if (hasActiveLookTarget) {
+    let gazeTx = 0;
+    let gazeTy = 0;
+    if (gazeTarget) {
       const g = this.computeGeom(now, layout);
       const eyeWorld = g.spritePointToWorld(0.49, 0.495);
-      const wdx = targetWX - eyeWorld.x;
-      const wdy = targetWY - eyeWorld.y;
+      const wdx = gazeTarget.x - eyeWorld.x;
+      const wdy = gazeTarget.y - eyeWorld.y;
       const c = Math.cos(-this.bodyTilt);
       const s = Math.sin(-this.bodyTilt);
       const localDx = wdx * c - wdy * s;
       const localDy = wdx * s + wdy * c;
       gazeTx = Math.max(-4.6, Math.min(4.6, localDx / 21));
-      gazeTy = Math.max(0.0, Math.min(4.3, localDy / 29));
+      gazeTy = Math.max(-4.3, Math.min(4.3, localDy / 29));
     }
 
-    const gazeRate = hasActiveLookTarget ? 24 : 8.5;
+    const gazeRate = gazeTarget ? 24 : 8.5;
     const gazeLerp = 1 - Math.exp(-gazeRate * dt);
     this.eyeGazeX += (gazeTx - this.eyeGazeX) * gazeLerp;
     this.eyeGazeY += (gazeTy - this.eyeGazeY) * gazeLerp;
@@ -776,7 +789,8 @@ export class DaFeiYuRenderer {
     else if (this.moodTier === 1) exprKey = 'shy';
     else if (isBlinking) exprKey = 'blink';
 
-    const img = this.sprites[exprKey] || this.sprites.idle;
+    const sprites = this.ensureSprites();
+    const img = sprites[exprKey] || sprites.idle;
     if (img && img.complete && img.naturalWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -792,7 +806,7 @@ export class DaFeiYuRenderer {
         ctx.save();
         ctx.translate(-g.drawW * 0.5, -g.drawH + g.pivotOff);
         ctx.scale(g.drawW / 224, g.drawH / 278);
-        this.renderLiveEyes(ctx, this.eyeGazeX, this.eyeGazeY, this.sprites.idle);
+        this.renderLiveEyes(ctx, this.eyeGazeX, this.eyeGazeY, sprites.idle);
         ctx.restore();
       }
 
@@ -1020,12 +1034,9 @@ export class DaFeiYuRenderer {
 
     if (layer === 'front' && slapPhase > 0.25) {
       ctx.save();
-      ctx.shadowColor = 'rgba(7, 16, 40, 0.45)';
-      ctx.shadowBlur = 10;
-      ctx.shadowOffsetY = 5;
-      ctx.fillStyle = 'rgba(20, 40, 88, 0.25)';
+      ctx.fillStyle = 'rgba(20, 40, 88, 0.22)';
       ctx.beginPath();
-      ctx.ellipse(tipX, tipY + 4, 20, 12, 0, 0, Math.PI * 2);
+      ctx.ellipse(tipX, tipY + 6, 22, 13, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }

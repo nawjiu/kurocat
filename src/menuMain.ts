@@ -4,6 +4,14 @@ import { listen } from '@tauri-apps/api/event';
 import { DEFAULT_TAIL_KEY_IDS, type KeyboardOrientation, type TailKeyMode } from './catEngine';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
 import { normalizeLayoutId, type KeyboardLayoutId } from './keyboardLayout';
+import {
+  applyDomTranslations,
+  isMacPlatform,
+  localizeBreedName,
+  normalizeLanguageSetting,
+  setActiveLocale,
+  t,
+} from './i18n';
 
 interface AppSettings {
   x: number | null;
@@ -31,6 +39,8 @@ interface AppSettings {
   mouseInvert?: boolean;
   purrAlwaysOn?: boolean;
   purrVolume?: number;
+  fpsCap?: number;
+  language?: string;
 }
 
 interface UpdateInfo {
@@ -53,16 +63,6 @@ interface UpdateProgressEvent {
 }
 
 type MenuTabId = 'appearance' | 'system';
-
-const isMacPlatform = (): boolean =>
-  /Mac/i.test(navigator.platform) || /Macintosh/i.test(navigator.userAgent);
-
-const TAIL_MODE_LABELS: Record<TailKeyMode, string> = {
-  smart: '智能第三只手',
-  custom: '自定义按键',
-  edge: '近尾边缘区',
-  off: '仅摆动',
-};
 
 let settings: AppSettings = {
   x: null,
@@ -90,16 +90,20 @@ let settings: AppSettings = {
   mouseInvert: false,
   purrAlwaysOn: false,
   purrVolume: 1,
+  fpsCap: 0,
+  language: 'auto',
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
+let resolvedBackendLocale: string | null = null;
 let sliderDragging = false;
 let purrSliderDragging = false;
 let purrCommitTimer: number | null = null;
-let currentAppVersion = '5.1.0';
+let currentAppVersion = '5.1.2';
 let cachedUpdateInfo: UpdateInfo | null = null;
 let updateBusy = false;
 let activeTab: MenuTabId = 'appearance';
+let settingsPatchSeq = 0;
 
 const menuEl = document.getElementById('context-menu') as HTMLDivElement;
 const tabBodyEl = document.getElementById('menu-tab-body') as HTMLDivElement | null;
@@ -112,6 +116,24 @@ const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanEl
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const btnObsHideEl = document.getElementById('btn-obs-hide') as HTMLButtonElement;
 const btnCheckUpdateEl = document.getElementById('btn-check-update') as HTMLButtonElement | null;
+
+function formatBreedPillLabel(cat: CatSkinConfig): string {
+  const displayName = localizeBreedName(cat.id, cat.name, cat.builtin);
+  if (cat.emoji) {
+    return displayName.startsWith(cat.emoji) ? displayName : `${cat.emoji} ${displayName}`;
+  }
+  return `🐱 ${displayName}`;
+}
+
+function formatHeaderCatName(cat: CatSkinConfig): string {
+  const emoji = cat.emoji || '🐱';
+  const displayName = localizeBreedName(cat.id, cat.name, cat.builtin);
+  const bareName =
+    cat.emoji && displayName.startsWith(cat.emoji)
+      ? displayName.slice(cat.emoji.length).trimStart()
+      : displayName;
+  return `${emoji} KuroCat ${bareName}`;
+}
 
 function switchTab(nextTab: MenuTabId): void {
   activeTab = nextTab;
@@ -138,9 +160,9 @@ function renderFooterUpdateState(customLabel?: string, ready = false): void {
   if (customLabel) {
     hint.textContent = customLabel;
   } else if (cachedUpdateInfo?.hasUpdate) {
-    hint.textContent = `⬆ 更新 v${cachedUpdateInfo.latestVersion}`;
+    hint.textContent = `⬆ ${t('menu.update_ready', { ver: cachedUpdateInfo.latestVersion })}`;
   } else {
-    hint.textContent = `检查更新 v${currentAppVersion}`;
+    hint.textContent = t('menu.check_update', { ver: currentAppVersion });
   }
 }
 
@@ -180,8 +202,9 @@ function renderBreedPills(): void {
     btn.type = 'button';
     btn.className = 'breed-pill';
     btn.dataset.breed = cat.id;
-    const emoji = cat.emoji ? `${cat.emoji} ` : '🐱 ';
-    btn.textContent = `${emoji}${cat.name}`;
+    const label = formatBreedPillLabel(cat);
+    btn.textContent = label;
+    btn.title = label;
     const accent = cat.accentColor || (cat.id === 'ragdoll' ? '#7ac7ff' : '#c8f538');
     btn.style.setProperty('--pill-accent', accent);
     btn.classList.toggle('active', cat.id === settings.catBreed);
@@ -190,6 +213,9 @@ function renderBreedPills(): void {
 }
 
 function syncUI(): void {
+  setActiveLocale(settings.language, resolvedBackendLocale);
+  applyDomTranslations();
+
   const setCheck = (id: string, on: boolean) => {
     const el = document.getElementById(id);
     if (el) el.textContent = on ? '✓' : '';
@@ -212,7 +238,15 @@ function syncUI(): void {
   }
   const obsHint = document.getElementById('obs-copy-hint');
   if (obsHint && !obsHint.classList.contains('copied')) {
-    obsHint.textContent = settings.obsEnabled ? `:${settings.obsPort || 27421}` : '免抠像';
+    obsHint.textContent = settings.obsEnabled ? `:${settings.obsPort || 27421}` : t('menu.obs_hint');
+  }
+  const mcpHint = document.getElementById('mcp-copy-hint');
+  if (mcpHint && !mcpHint.classList.contains('copied')) {
+    mcpHint.textContent = t('menu.copy_mcp');
+  }
+  const hooksHint = document.getElementById('hooks-copy-hint');
+  if (hooksHint && !hooksHint.classList.contains('copied')) {
+    hooksHint.textContent = t('menu.copy_hooks');
   }
 
   if (!sliderDragging) {
@@ -231,6 +265,16 @@ function syncUI(): void {
     btn.classList.toggle('active', btn.dataset.kborient === kbOrient);
   });
 
+  const fpsCap = settings.fpsCap === 30 ? '30' : '0';
+  document.querySelectorAll<HTMLButtonElement>('[data-fpscap]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.fpscap === fpsCap);
+  });
+
+  const langSetting = normalizeLanguageSetting(settings.language);
+  document.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.lang === langSetting);
+  });
+
   const tailMode: TailKeyMode =
     settings.tailKeyMode === 'custom' ||
     settings.tailKeyMode === 'edge' ||
@@ -242,10 +286,10 @@ function syncUI(): void {
     btn.classList.toggle('active', btn.dataset.tailmode === tailMode);
   });
   if (tailModeBadgeEl) {
-    tailModeBadgeEl.textContent = TAIL_MODE_LABELS[tailMode];
+    tailModeBadgeEl.textContent = t(`menu.tail_badge_${tailMode}`);
   }
   if (tailKeysCountEl) {
-    tailKeysCountEl.textContent = `${tailIds.length} 键`;
+    tailKeysCountEl.textContent = t('menu.tail_keys_count', { count: tailIds.length });
   }
 
   const activeCat = catList.find((c) => c.id === settings.catBreed) ?? catList[0];
@@ -265,6 +309,10 @@ function syncUI(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-collar]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.collar === collarColor);
   });
+  const renderModeRowEl = document.getElementById('render-mode-row');
+  if (renderModeRowEl) {
+    renderModeRowEl.classList.toggle('hidden', settings.catBreed === 'dafeiyu');
+  }
   const collarRowEl = document.getElementById('collar-row');
   if (collarRowEl) {
     collarRowEl.classList.toggle('hidden', renderMode === '2d' || settings.catBreed === 'dafeiyu');
@@ -284,17 +332,27 @@ function syncUI(): void {
 
   const headerEl = document.getElementById('menu-header');
   if (headerEl && activeCat) {
-    const emoji = activeCat.emoji || '🐱';
-    headerEl.textContent = `${emoji} KuroCat ${activeCat.name}`;
+    headerEl.textContent = formatHeaderCatName(activeCat);
     headerEl.style.color = activeCat.accentColor || '#c8f538';
+  }
+
+  if (!updateBusy) {
+    renderFooterUpdateState();
   }
 }
 
 async function applySettingsPatch(patch: Partial<AppSettings>): Promise<void> {
+  const seq = ++settingsPatchSeq;
   settings = { ...settings, ...patch };
   syncUI();
-  settings = await invoke<AppSettings>('update_settings', { patch: settings });
-  syncUI();
+  try {
+    const updated = await invoke<AppSettings>('update_settings', { patch: settings });
+    if (seq !== settingsPatchSeq) return;
+    settings = updated;
+    syncUI();
+  } catch (err) {
+    console.error('Failed to update settings:', err);
+  }
 }
 
 async function copyText(text: string): Promise<void> {
@@ -318,15 +376,33 @@ async function copyMcpConfig(): Promise<void> {
     const jsonText = await invoke<string>('get_mcp_config');
     await copyText(jsonText);
     if (hint) {
-      hint.textContent = '✓ 已复制';
+      hint.textContent = t('menu.copied_hint');
       hint.classList.add('copied');
       setTimeout(() => {
-        hint.textContent = 'AI 捏猫';
+        hint.textContent = t('menu.copy_mcp');
         hint.classList.remove('copied');
       }, 1800);
     }
   } catch (err) {
     console.error('Failed to copy MCP config:', err);
+  }
+}
+
+async function copyAgentHooksConfig(): Promise<void> {
+  const hint = document.getElementById('hooks-copy-hint');
+  try {
+    const jsonText = await invoke<string>('get_agent_hooks_config');
+    await copyText(jsonText);
+    if (hint) {
+      hint.textContent = t('menu.copied_hint');
+      hint.classList.add('copied');
+      setTimeout(() => {
+        hint.textContent = t('menu.copy_hooks');
+        hint.classList.remove('copied');
+      }, 1800);
+    }
+  } catch (err) {
+    console.error('Failed to copy Agent hooks config:', err);
   }
 }
 
@@ -339,11 +415,11 @@ async function copyObsUrl(): Promise<void> {
     const url = await invoke<string>('get_obs_url');
     await copyText(url);
     if (hint) {
-      hint.textContent = '✓ 已复制';
+      hint.textContent = t('menu.copied_hint');
       hint.classList.add('copied');
       setTimeout(() => {
         hint.classList.remove('copied');
-        hint.textContent = settings.obsEnabled ? `:${settings.obsPort || 27421}` : '免抠像';
+        hint.textContent = settings.obsEnabled ? `:${settings.obsPort || 27421}` : t('menu.obs_hint');
       }, 2000);
     }
   } catch (err) {
@@ -356,7 +432,7 @@ async function createDesktopShortcut(): Promise<void> {
   try {
     await invoke<string>('create_desktop_shortcut');
     if (hint) {
-      hint.textContent = '✓ 已创建';
+      hint.textContent = t('menu.created_hint');
       hint.classList.add('copied');
       setTimeout(() => {
         hint.textContent = 'KuroCat';
@@ -366,7 +442,7 @@ async function createDesktopShortcut(): Promise<void> {
   } catch (err) {
     console.error('Failed to create shortcut:', err);
     if (hint) {
-      hint.textContent = '失败';
+      hint.textContent = '✕';
       setTimeout(() => {
         hint.textContent = 'KuroCat';
       }, 1800);
@@ -376,11 +452,10 @@ async function createDesktopShortcut(): Promise<void> {
 
 async function triggerManualUpdateCheck(): Promise<void> {
   if (updateBusy) return;
-  // If we already know an update is available, clicking immediately installs (or opens release page).
   if (cachedUpdateInfo?.hasUpdate) {
     if (cachedUpdateInfo.downloadUrl) {
       updateBusy = true;
-      renderFooterUpdateState(`下载 v${cachedUpdateInfo.latestVersion}...`, true);
+      renderFooterUpdateState(t('menu.checking_short'), true);
       closeMenu();
       try {
         await invoke('install_update', { info: cachedUpdateInfo });
@@ -398,23 +473,23 @@ async function triggerManualUpdateCheck(): Promise<void> {
   }
 
   updateBusy = true;
-  renderFooterUpdateState('检查更新中…', false);
+  renderFooterUpdateState(t('menu.checking_short'), false);
   try {
     const info = await invoke<UpdateInfo>('check_for_update');
     updateBusy = false;
     if (info.hasUpdate) {
       cachedUpdateInfo = info;
-      renderFooterUpdateState(`⬆ 点击更新 v${info.latestVersion}`, true);
+      renderFooterUpdateState(`⬆ ${t('menu.update_ready', { ver: info.latestVersion })}`, true);
     } else {
       cachedUpdateInfo = info;
-      renderFooterUpdateState(`✓ 最新 v${info.currentVersion}`, false);
+      renderFooterUpdateState(`✓ v${info.currentVersion}`, false);
       setTimeout(() => {
         renderFooterUpdateState();
       }, 2200);
     }
   } catch {
     updateBusy = false;
-    renderFooterUpdateState('检查失败，点此重试', false);
+    renderFooterUpdateState('⚠ Retry', false);
     setTimeout(() => {
       renderFooterUpdateState();
     }, 2200);
@@ -425,18 +500,176 @@ async function bootstrap(): Promise<void> {
   if (isMacPlatform()) {
     const shortcutBtn = document.getElementById('btn-desktop-shortcut');
     if (shortcutBtn) shortcutBtn.classList.add('hidden');
-    const lockLbl = document.getElementById('lbl-toggle-lock');
-    if (lockLbl) lockLbl.textContent = '锁定鼠标穿透（Option 解锁）';
-    const lockBtn = document.getElementById('btn-toggle-lock');
-    if (lockBtn) lockBtn.title = '开启后重启保持锁定，按住 Option 或在菜单栏可随时解锁';
   }
 
+  let resolveInitReady!: () => void;
+  const initReadyPromise = new Promise<void>((resolve) => {
+    resolveInitReady = resolve;
+  });
+
+  // Register menu click delegation immediately so fast clicks right after side-menu
+  // recreation (post 25s idle destroy) are queued behind initial IPC load rather than dropped.
+  menuEl.addEventListener('click', (e) => {
+    const tabBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tab]');
+    if (tabBtn) {
+      const next = tabBtn.dataset.tab;
+      if (next === 'appearance' || next === 'system') {
+        switchTab(next);
+      }
+      return;
+    }
+
+    const target = (e.target as HTMLElement).closest<HTMLElement>(
+      '[data-action], [data-breed], [data-rendermode], [data-collar], [data-headphonemode], [data-kblayout], [data-kborient], [data-tailmode], [data-fpscap], [data-lang]',
+    );
+    if (!target) return;
+
+    void initReadyPromise.then(() => {
+      const fpsAttr = target.dataset.fpscap;
+      if (fpsAttr === '0' || fpsAttr === '30') {
+        void applySettingsPatch({ fpsCap: fpsAttr === '30' ? 30 : 0 });
+        return;
+      }
+
+      const langAttr = target.dataset.lang;
+      if (langAttr) {
+        void applySettingsPatch({ language: normalizeLanguageSetting(langAttr) });
+        return;
+      }
+
+      const headphoneAttr = target.dataset.headphonemode;
+      if (headphoneAttr === 'auto' || headphoneAttr === 'on' || headphoneAttr === 'off') {
+        void applySettingsPatch({ headphoneMode: headphoneAttr });
+        return;
+      }
+
+      const renderModeAttr = target.dataset.rendermode;
+      if (renderModeAttr === '2d' || renderModeAttr === '3d') {
+        void applySettingsPatch({ renderMode: renderModeAttr });
+        return;
+      }
+
+      const collarAttr = target.dataset.collar;
+      if (
+        collarAttr === 'none' ||
+        collarAttr === 'red' ||
+        collarAttr === 'blue' ||
+        collarAttr === 'pink' ||
+        collarAttr === 'green'
+      ) {
+        void applySettingsPatch({ collarColor: collarAttr });
+        return;
+      }
+
+      const kbLayoutAttr = target.dataset.kblayout;
+      if (kbLayoutAttr === '65' || kbLayoutAttr === '98' || kbLayoutAttr === '108') {
+        void applySettingsPatch({ keyboardLayout: kbLayoutAttr });
+        return;
+      }
+
+      const kbOrientAttr = target.dataset.kborient;
+      if (kbOrientAttr === 'cat' || kbOrientAttr === 'viewer') {
+        void applySettingsPatch({ keyboardOrientation: kbOrientAttr });
+        return;
+      }
+
+      const tailModeAttr = target.dataset.tailmode;
+      if (
+        tailModeAttr === 'smart' ||
+        tailModeAttr === 'custom' ||
+        tailModeAttr === 'edge' ||
+        tailModeAttr === 'off'
+      ) {
+        void applySettingsPatch({ tailKeyMode: tailModeAttr });
+        return;
+      }
+
+      const breedAttr = target.dataset.breed;
+      if (breedAttr) {
+        void applySettingsPatch({ catBreed: breedAttr });
+        return;
+      }
+
+      switch (target.dataset.action) {
+        case 'toggle-privacy':
+          void applySettingsPatch({ privacyPasswordGuard: !(settings.privacyPasswordGuard !== false) });
+          break;
+        case 'toggle-bubbles':
+          void applySettingsPatch({ showKeyBubbles: !settings.showKeyBubbles });
+          break;
+        case 'toggle-lock':
+          void applySettingsPatch({ clickThroughLocked: !settings.clickThroughLocked });
+          closeMenu();
+          break;
+        case 'toggle-sound':
+          void applySettingsPatch({ soundEnabled: !settings.soundEnabled });
+          break;
+        case 'toggle-top':
+          void applySettingsPatch({ alwaysOnTop: !settings.alwaysOnTop });
+          break;
+        case 'toggle-autostart':
+          void applySettingsPatch({ autostart: !settings.autostart });
+          break;
+        case 'toggle-mouse-invert':
+          void applySettingsPatch({ mouseInvert: settings.mouseInvert !== true });
+          break;
+        case 'toggle-purr-always':
+          void applySettingsPatch({ purrAlwaysOn: settings.purrAlwaysOn !== true });
+          break;
+        case 'toggle-obs': {
+          const nextObs = !settings.obsEnabled;
+          void applySettingsPatch({
+            obsEnabled: nextObs,
+            obsHidePet: nextObs ? settings.obsHidePet : false,
+          });
+          break;
+        }
+        case 'copy-obs':
+          void copyObsUrl();
+          break;
+        case 'toggle-obs-hide':
+          void applySettingsPatch({ obsHidePet: !settings.obsHidePet });
+          if (!settings.obsHidePet) {
+            closeMenu();
+          }
+          break;
+        case 'toggle-mcp':
+          void applySettingsPatch({ mcpEnabled: !settings.mcpEnabled });
+          break;
+        case 'copy-mcp':
+          void copyMcpConfig();
+          break;
+        case 'copy-hooks':
+          void copyAgentHooksConfig();
+          break;
+        case 'open-tail-picker':
+          void invoke('open_tail_picker_from_menu');
+          break;
+        case 'desktop-shortcut':
+          void createDesktopShortcut();
+          break;
+        case 'reset-pos':
+          void invoke('reset_position');
+          closeMenu();
+          break;
+        case 'check-update':
+          void triggerManualUpdateCheck();
+          break;
+        case 'quit':
+          void invoke('quit_app');
+          break;
+      }
+    });
+  });
+
+  let inTauri = true;
   try {
-    const [loadedSettings, loadedCats, ver, cachedUpd] = await Promise.all([
+    const [loadedSettings, loadedCats, ver, cachedUpd, resolvedLoc] = await Promise.all([
       invoke<AppSettings>('get_settings'),
       invoke<CatSkinConfig[]>('get_cats'),
       invoke<string>('get_app_version'),
       invoke<UpdateInfo | null>('get_cached_update_info').catch(() => null),
+      invoke<string>('get_resolved_locale').catch(() => ''),
     ]);
     settings = loadedSettings;
     if (Array.isArray(loadedCats) && loadedCats.length > 0) {
@@ -448,16 +681,39 @@ async function bootstrap(): Promise<void> {
     if (cachedUpd) {
       cachedUpdateInfo = cachedUpd;
     }
+    if (resolvedLoc) {
+      resolvedBackendLocale = resolvedLoc;
+    }
   } catch (err) {
-    console.error('Failed to load menu state:', err);
+    inTauri = false;
+    console.warn('Running menu outside Tauri IPC:', err);
+    // Allow static browser layout verification via ?lang=en-US&tab=system&obs=1
+    const params = new URLSearchParams(window.location.search);
+    const qLang = params.get('lang');
+    if (qLang) settings.language = qLang;
+    if (params.get('obs') === '1') settings.obsEnabled = true;
+    const qTab = params.get('tab');
+    if (qTab === 'appearance' || qTab === 'system') activeTab = qTab;
+    // Populate all 7 built-in cats for realistic layout verification outside Tauri
+    catList = [
+      ...DEFAULT_BUILTIN_CATS.slice(0, 2),
+      { ...DEFAULT_BUILTIN_CATS[0], id: 'orange-tabby', name: '大橘猫', emoji: '🍊', accentColor: '#ff9f43' },
+      { ...DEFAULT_BUILTIN_CATS[0], id: 'calico', name: '三花猫', emoji: '🌸', accentColor: '#ff7eb3' },
+      { ...DEFAULT_BUILTIN_CATS[0], id: 'tuxedo', name: '奶牛猫', emoji: '🐄', accentColor: '#d0d7de' },
+      { ...DEFAULT_BUILTIN_CATS[0], id: 'siamese', name: '暹罗猫', emoji: '☕', accentColor: '#c9a679' },
+      DEFAULT_BUILTIN_CATS[2],
+    ];
   }
   syncUI();
   renderFooterUpdateState();
-  switchTab('appearance');
+  switchTab(activeTab);
+  resolveInitReady();
 
-  const isWin7 = await invoke<boolean>('is_win7_ulw_mode').catch(() => false);
-  if (isWin7) {
-    document.documentElement.classList.add('win7-ulw-mode');
+  if (inTauri) {
+    const isWin7 = await invoke<boolean>('is_win7_ulw_mode').catch(() => false);
+    if (isWin7) {
+      document.documentElement.classList.add('win7-ulw-mode');
+    }
   }
 
   document.getElementById('btn-close-menu')?.addEventListener('click', () => closeMenu());
@@ -474,7 +730,7 @@ async function bootstrap(): Promise<void> {
       sliderDragging = true;
       const nextScale = Math.max(0.2, Math.min(1.5, Number(scaleSliderEl.value) / 100));
       updateScaleSliderVisual(nextScale);
-      void invoke('preview_scale', { scale: nextScale });
+      void invoke('preview_scale', { scale: nextScale }).catch(() => {});
     });
     const commitSliderScale = () => {
       sliderDragging = false;
@@ -535,141 +791,7 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  menuEl.addEventListener('click', (e) => {
-    const tabBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tab]');
-    if (tabBtn) {
-      const t = tabBtn.dataset.tab;
-      if (t === 'appearance' || t === 'system') {
-        switchTab(t);
-      }
-      return;
-    }
-
-    const target = (e.target as HTMLElement).closest<HTMLElement>(
-      '[data-action], [data-breed], [data-rendermode], [data-collar], [data-headphonemode], [data-kblayout], [data-kborient], [data-tailmode]',
-    );
-    if (!target) return;
-
-    const headphoneAttr = target.dataset.headphonemode;
-    if (headphoneAttr === 'auto' || headphoneAttr === 'on' || headphoneAttr === 'off') {
-      void applySettingsPatch({ headphoneMode: headphoneAttr });
-      return;
-    }
-
-    const renderModeAttr = target.dataset.rendermode;
-    if (renderModeAttr === '2d' || renderModeAttr === '3d') {
-      void applySettingsPatch({ renderMode: renderModeAttr });
-      return;
-    }
-
-    const collarAttr = target.dataset.collar;
-    if (
-      collarAttr === 'none' ||
-      collarAttr === 'red' ||
-      collarAttr === 'blue' ||
-      collarAttr === 'pink' ||
-      collarAttr === 'green'
-    ) {
-      void applySettingsPatch({ collarColor: collarAttr });
-      return;
-    }
-
-    const kbLayoutAttr = target.dataset.kblayout;
-    if (kbLayoutAttr === '65' || kbLayoutAttr === '98' || kbLayoutAttr === '108') {
-      void applySettingsPatch({ keyboardLayout: kbLayoutAttr });
-      return;
-    }
-
-    const kbOrientAttr = target.dataset.kborient;
-    if (kbOrientAttr === 'cat' || kbOrientAttr === 'viewer') {
-      void applySettingsPatch({ keyboardOrientation: kbOrientAttr });
-      return;
-    }
-
-    const tailModeAttr = target.dataset.tailmode;
-    if (
-      tailModeAttr === 'smart' ||
-      tailModeAttr === 'custom' ||
-      tailModeAttr === 'edge' ||
-      tailModeAttr === 'off'
-    ) {
-      void applySettingsPatch({ tailKeyMode: tailModeAttr });
-      return;
-    }
-
-    const breedAttr = target.dataset.breed;
-    if (breedAttr) {
-      void applySettingsPatch({ catBreed: breedAttr });
-      return;
-    }
-
-    switch (target.dataset.action) {
-      case 'toggle-privacy':
-        void applySettingsPatch({ privacyPasswordGuard: !(settings.privacyPasswordGuard !== false) });
-        break;
-      case 'toggle-bubbles':
-        void applySettingsPatch({ showKeyBubbles: !settings.showKeyBubbles });
-        break;
-      case 'toggle-lock':
-        void applySettingsPatch({ clickThroughLocked: !settings.clickThroughLocked });
-        closeMenu();
-        break;
-      case 'toggle-sound':
-        void applySettingsPatch({ soundEnabled: !settings.soundEnabled });
-        break;
-      case 'toggle-top':
-        void applySettingsPatch({ alwaysOnTop: !settings.alwaysOnTop });
-        break;
-      case 'toggle-autostart':
-        void applySettingsPatch({ autostart: !settings.autostart });
-        break;
-      case 'toggle-mouse-invert':
-        void applySettingsPatch({ mouseInvert: settings.mouseInvert !== true });
-        break;
-      case 'toggle-purr-always':
-        void applySettingsPatch({ purrAlwaysOn: settings.purrAlwaysOn !== true });
-        break;
-      case 'toggle-obs': {
-        const nextObs = !settings.obsEnabled;
-        void applySettingsPatch({
-          obsEnabled: nextObs,
-          obsHidePet: nextObs ? settings.obsHidePet : false,
-        });
-        break;
-      }
-      case 'copy-obs':
-        void copyObsUrl();
-        break;
-      case 'toggle-obs-hide':
-        void applySettingsPatch({ obsHidePet: !settings.obsHidePet });
-        if (!settings.obsHidePet) {
-          closeMenu();
-        }
-        break;
-      case 'toggle-mcp':
-        void applySettingsPatch({ mcpEnabled: !settings.mcpEnabled });
-        break;
-      case 'copy-mcp':
-        void copyMcpConfig();
-        break;
-      case 'open-tail-picker':
-        void invoke('open_tail_picker_from_menu');
-        break;
-      case 'desktop-shortcut':
-        void createDesktopShortcut();
-        break;
-      case 'reset-pos':
-        void invoke('reset_position');
-        closeMenu();
-        break;
-      case 'check-update':
-        void triggerManualUpdateCheck();
-        break;
-      case 'quit':
-        void invoke('quit_app');
-        break;
-    }
-  });
+  if (!inTauri) return;
 
   await listen<AppSettings>('kuro-settings', (ev) => {
     settings = ev.payload;
@@ -690,9 +812,13 @@ async function bootstrap(): Promise<void> {
     if (ev.payload.stage === 'available' && cachedUpdateInfo?.hasUpdate) {
       updateBusy = false;
       renderFooterUpdateState();
-    } else if (ev.payload.stage === 'downloading' || ev.payload.stage === 'verifying' || ev.payload.stage === 'installing') {
+    } else if (
+      ev.payload.stage === 'downloading' ||
+      ev.payload.stage === 'verifying' ||
+      ev.payload.stage === 'installing'
+    ) {
       updateBusy = true;
-      renderFooterUpdateState('更新中...', true);
+      renderFooterUpdateState(t('menu.checking_short'), true);
     } else if (ev.payload.stage === 'up_to_date' || ev.payload.stage === 'error') {
       updateBusy = false;
       renderFooterUpdateState();
@@ -701,10 +827,11 @@ async function bootstrap(): Promise<void> {
 
   await listen('kuro-menu-opened', async () => {
     try {
-      const [latestSettings, latestCats, cachedUpd] = await Promise.all([
+      const [latestSettings, latestCats, cachedUpd, resolvedLoc] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<CatSkinConfig[]>('get_cats'),
         invoke<UpdateInfo | null>('get_cached_update_info').catch(() => null),
+        invoke<string>('get_resolved_locale').catch(() => ''),
       ]);
       settings = latestSettings;
       if (Array.isArray(latestCats) && latestCats.length > 0) {
@@ -712,6 +839,9 @@ async function bootstrap(): Promise<void> {
       }
       if (cachedUpd) {
         cachedUpdateInfo = cachedUpd;
+      }
+      if (resolvedLoc) {
+        resolvedBackendLocale = resolvedLoc;
       }
       syncUI();
       renderFooterUpdateState();

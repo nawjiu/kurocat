@@ -84,6 +84,26 @@ pub fn default_purr_volume() -> f64 {
     1.0
 }
 
+pub fn default_fps_cap() -> u16 {
+    0
+}
+
+pub fn normalize_fps_cap(raw: u16) -> u16 {
+    match raw {
+        30 => 30,
+        60 => 60,
+        _ => 0,
+    }
+}
+
+pub fn default_language() -> String {
+    "auto".to_string()
+}
+
+pub fn normalize_language(raw: &str) -> String {
+    crate::i18n::normalize_language_setting(raw)
+}
+
 pub fn default_keyboard_layout() -> String {
     if cfg!(feature = "layout-108") {
         "108".to_string()
@@ -205,6 +225,10 @@ pub struct AppSettings {
     pub purr_always_on: bool,
     #[serde(default = "default_purr_volume")]
     pub purr_volume: f64,
+    #[serde(default = "default_fps_cap")]
+    pub fps_cap: u16,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 impl Default for AppSettings {
@@ -239,6 +263,8 @@ impl Default for AppSettings {
             mouse_invert: default_mouse_invert(),
             purr_always_on: default_purr_always_on(),
             purr_volume: default_purr_volume(),
+            fps_cap: default_fps_cap(),
+            language: default_language(),
         }
     }
 }
@@ -283,6 +309,8 @@ pub fn load_settings() -> AppSettings {
             parsed.render_mode = normalize_render_mode(&parsed.render_mode);
             parsed.collar_color = normalize_collar_color(&parsed.collar_color);
             parsed.headphone_mode = normalize_headphone_mode(&parsed.headphone_mode);
+            parsed.fps_cap = normalize_fps_cap(parsed.fps_cap);
+            parsed.language = normalize_language(&parsed.language);
             return parsed;
         }
     }

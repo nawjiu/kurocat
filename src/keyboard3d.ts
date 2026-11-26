@@ -283,9 +283,9 @@ const keyAtlasCache = new Map<string, KeyAtlasData>();
 const miscTextureCache = new Map<string, THREE.CanvasTexture>();
 
 /**
- * Packs all unique keycap legends for a layout + orientation into ONE single crisp power-of-2
- * CanvasTexture atlas (128x128 per tile with 2px inner bleed padding), collapsing 67-108 separate
- * keycap textures and 201-324 draw calls into just 2 InstancedMesh draw calls total!
+ * Packs all unique keycap legends for a layout + orientation into ONE compact CanvasTexture atlas
+ * (96x96 per tile, linear-filtered without mipmaps -> ~4 MB VRAM instead of ~38 MB!), collapsing
+ * 67-108 separate keycap textures and 201-324 draw calls into just 2 InstancedMesh draw calls total!
  */
 function getKeycapAtlas(
   layoutId: KeyboardLayoutId,
@@ -295,6 +295,14 @@ function getKeycapAtlas(
   const cacheKey = `${layoutId}|${rotated180 ? 1 : 0}`;
   const cached = keyAtlasCache.get(cacheKey);
   if (cached) return cached;
+
+  // 换配列时把旧图集释放掉，别让 65% / 98 / 108 三套图集把显存堆爆
+  for (const [oldKey, oldEntry] of keyAtlasCache) {
+    if (oldKey !== cacheKey) {
+      oldEntry.tex.dispose();
+      keyAtlasCache.delete(oldKey);
+    }
+  }
 
   const toneOrder: KeyTone[] = ['base', 'mod', 'ivory', 'slate', 'pale', 'orange'];
   const grouped = new Map<KeyTone, Array<{ key: string; label: string; tone: KeyTone }>>();
@@ -317,8 +325,8 @@ function getKeycapAtlas(
   const tileTotal = Array.from(grouped.values()).reduce((n, l) => n + l.length, 0);
   const cols = tileTotal <= 48 ? 8 : 16;
 
-  // Every tone gets its own solid row band, filled edge to edge with that tone's colour, so
-  // mipmaps can only ever bleed a colour into itself (dark slate never smudges the ivory caps).
+  // 每个色系单独占一条整行，按该色铺满整行，mipmap 最多把颜色渗到自己身上
+  // （深色键帽的边儿绝不会抹到奶白色上去）。
   let rowCursor = 0;
   const bands = toneOrder
     .filter((tone) => (grouped.get(tone)?.length ?? 0) > 0)
@@ -341,7 +349,7 @@ function getKeycapAtlas(
   g.fillRect(0, 0, atlasW, atlasH);
 
   const rects = new Map<string, [number, number, number, number]>();
-  const PAD = 10.0;
+  const PAD = 7.5;
 
   const paintTile = (
     item: { key: string; label: string; tone: KeyTone },
@@ -367,12 +375,12 @@ function getKeycapAtlas(
       g.translate(ox + CELL * 0.5, oy + CELL * 0.5);
       if (rotated180) g.rotate(Math.PI);
       const len = item.label.length;
-      const fontSize = len >= 4 ? 29 : len === 3 ? 35 : len === 2 ? 42 : 52;
+      const fontSize = len >= 4 ? 22 : len === 3 ? 26 : len === 2 ? 32 : 39;
       g.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
       g.fillStyle = tone.legend;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(item.label, 0, 2);
+      g.fillText(item.label, 0, 1.5);
       g.restore();
     }
 
@@ -393,12 +401,25 @@ function getKeycapAtlas(
   }
 
   const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = 4;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   const entry: KeyAtlasData = { tex, rects };
   keyAtlasCache.set(cacheKey, entry);
   return entry;
+}
+
+export function disposeKeyboardCaches(): void {
+  for (const entry of keyAtlasCache.values()) {
+    entry.tex.dispose();
+  }
+  keyAtlasCache.clear();
+  for (const tex of miscTextureCache.values()) {
+    tex.dispose();
+  }
+  miscTextureCache.clear();
 }
 
 function makeSoftShadowTexture(): THREE.CanvasTexture {
@@ -1115,5 +1136,28 @@ export class KeyboardAndMouse3D {
 
     const anyPress = Math.max(this.leftPress, this.rightPress);
     this.mouseShape.scale.set(1 + 0.03 * anyPress, 1 - 0.10 * anyPress, 1);
+  }
+
+  public dispose(): void {
+    this.deskGroup.traverse((obj: THREE.Object3D) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (Array.isArray(mat)) {
+        for (const m of mat) m.dispose();
+      } else if (mat) {
+        mat.dispose();
+      }
+    });
+    for (const d of this.boardDisposables) {
+      d.dispose();
+    }
+    this.boardDisposables.length = 0;
+    this.capSideGeo.dispose();
+    this.capTopBaseGeo.dispose();
+    this.capSideMat.dispose();
+    this.chassisMat.dispose();
+    this.kbShadowMat.dispose();
+    disposeKeyboardCaches();
   }
 }

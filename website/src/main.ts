@@ -18,9 +18,9 @@ import {
 import { keyboardEventToVk } from './webKeyMap';
 import type { CollarColorId, KuroCatEngine3D } from '../../src/catEngine3d';
 
-const LOCAL_MIRROR_VERSION = 'v5.1.0';
-const LOCAL_MIRROR_VER_NUM = '5.1.0';
-const MACOS_MIRROR_VERSION = 'v5.1.0';
+const LOCAL_MIRROR_VERSION = 'v5.1.2';
+const LOCAL_MIRROR_VER_NUM = '5.1.2';
+const MACOS_MIRROR_VERSION = 'v5.1.2';
 
 let currentLocale: Locale = detectInitialLocale();
 let i18n = KUROCAT_I18N[currentLocale];
@@ -1107,6 +1107,20 @@ function initMcpCodeTabs(): void {
       });
     });
   });
+  // Donate EVM address copy
+  const donateBtn = document.getElementById('copy-donate-btn');
+  const donateAddrEl = document.getElementById('donate-evm-addr');
+  if (donateBtn && donateAddrEl) {
+    donateBtn.addEventListener('click', () => {
+      const addr = (donateAddrEl.textContent || '0x40995b4c9ad8cd4356417a34ab94fa20d5844617').trim();
+      navigator.clipboard.writeText(addr).then(() => {
+        donateBtn.textContent = i18n.fmt.copied();
+        window.setTimeout(() => {
+          donateBtn.textContent = i18n.text['donate.copy'] || i18n.fmt.copyShort();
+        }, 1600);
+      });
+    });
+  }
 }
 
 function initPolish(): void {
@@ -1151,11 +1165,319 @@ function initLanguageSwitcher(): void {
   });
 }
 
+interface GrowthPoint {
+  ts: number;
+  label: string;
+  short: string;
+  downloads: number;
+  cdn_downloads?: number;
+  stars: number;
+}
+
+interface GrowthSeries {
+  total_downloads: number;
+  cdn_downloads: number;
+  github_downloads: number;
+  today_downloads: number;
+  stars: number;
+  forks: number;
+  step_hours: number;
+  updated_at_cst: string;
+  points: GrowthPoint[];
+}
+
+function niceAxisMax(v: number): number {
+  if (v <= 10) return Math.max(4, Math.ceil(v / 2) * 2);
+  const exp = Math.pow(10, Math.floor(Math.log10(v)));
+  const norm = v / exp;
+  const step =
+    norm <= 1.2 ? 1.2
+    : norm <= 1.5 ? 1.5
+    : norm <= 2 ? 2
+    : norm <= 2.5 ? 2.5
+    : norm <= 3 ? 3
+    : norm <= 4 ? 4
+    : norm <= 5 ? 5
+    : norm <= 6 ? 6
+    : norm <= 8 ? 8
+    : 10;
+  return Math.max(v, Math.ceil(step * exp));
+}
+
+function fmtCompactNum(v: number): string {
+  if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+  if (v >= 1000) return v % 100 === 0 ? `${Math.round(v / 1000)}k` : `${(v / 1000).toFixed(2)}k`;
+  return String(v);
+}
+
+function buildSmoothCurvePath(coords: Array<[number, number]>): string {
+  if (coords.length === 0) return '';
+  if (coords.length === 1) return `M ${coords[0][0].toFixed(1)} ${coords[0][1].toFixed(1)}`;
+  const parts = [`M ${coords[0][0].toFixed(1)} ${coords[0][1].toFixed(1)}`];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[Math.max(0, i - 1)];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[Math.min(coords.length - 1, i + 2)];
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const loY = Math.min(p1[1], p2[1]);
+    const hiY = Math.max(p1[1], p2[1]);
+    const c1y = Math.max(loY, Math.min(hiY, p1[1] + (p2[1] - p0[1]) / 6));
+    const c2y = Math.max(loY, Math.min(hiY, p2[1] - (p3[1] - p1[1]) / 6));
+    parts.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`);
+  }
+  return parts.join(' ');
+}
+
+function initGrowthChart(): void {
+  const svg = document.getElementById('growth-chart-svg') as SVGSVGElement | null;
+  const stage = document.getElementById('growth-chart-stage');
+  const tooltip = document.getElementById('growth-tooltip');
+  const ttTime = document.getElementById('growth-tt-time');
+  const ttDl = document.getElementById('growth-tt-dl');
+  const ttStars = document.getElementById('growth-tt-stars');
+  const kpiDl = document.getElementById('growth-kpi-dl');
+  const kpiStars = document.getElementById('growth-kpi-stars');
+  const updatedEl = document.getElementById('growth-updated');
+  if (!svg || !stage) return;
+
+  let cachedSeries: GrowthSeries | null = null;
+  let mode: 'both' | 'downloads' | 'stars' = 'both';
+  let dlCoords: Array<[number, number]> = [];
+  let starCoords: Array<[number, number]> = [];
+
+  const W = 920;
+  const H = 330;
+  const padL = 66;
+  const padR = 62;
+  const padT = 26;
+  const padB = 42;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const baseY = padT + plotH;
+
+  const renderUpdatedText = () => {
+    if (!updatedEl || !cachedSeries) return;
+    const timePart = (cachedSeries.updated_at_cst || '').slice(5, 16) || cachedSeries.updated_at_cst;
+    updatedEl.textContent = i18n.fmt.statsUpdated(timePart);
+  };
+
+  const renderChart = () => {
+    if (!cachedSeries || !cachedSeries.points || cachedSeries.points.length === 0) return;
+    const pts = cachedSeries.points;
+    if (kpiDl) kpiDl.textContent = cachedSeries.total_downloads.toLocaleString();
+    if (kpiStars) kpiStars.textContent = `★ ${cachedSeries.stars.toLocaleString()}`;
+    renderUpdatedText();
+
+    const dlMax = niceAxisMax(Math.max(10, cachedSeries.total_downloads, ...pts.map((p) => p.downloads)));
+    const stMax = niceAxisMax(Math.max(10, cachedSeries.stars, ...pts.map((p) => p.stars)));
+
+    const showDl = mode === 'both' || mode === 'downloads';
+    const showSt = mode === 'both' || mode === 'stars';
+
+    const n = pts.length;
+    dlCoords = pts.map((p, idx) => {
+      const x = n > 1 ? padL + (plotW * idx) / (n - 1) : padL + plotW / 2;
+      const y = padT + plotH * (1 - p.downloads / dlMax);
+      return [x, y];
+    });
+    starCoords = pts.map((p, idx) => {
+      const x = n > 1 ? padL + (plotW * idx) / (n - 1) : padL + plotW / 2;
+      const y = padT + plotH * (1 - p.stars / stMax);
+      return [x, y];
+    });
+
+    const dlPath = buildSmoothCurvePath(dlCoords);
+    const stPath = buildSmoothCurvePath(starCoords);
+    const dlArea = `${dlPath} L ${dlCoords[n - 1][0].toFixed(1)} ${baseY.toFixed(1)} L ${dlCoords[0][0].toFixed(1)} ${baseY.toFixed(1)} Z`;
+    const stArea = `${stPath} L ${starCoords[n - 1][0].toFixed(1)} ${baseY.toFixed(1)} L ${starCoords[0][0].toFixed(1)} ${baseY.toFixed(1)} Z`;
+
+    const gridParts: string[] = [];
+    for (let i = 0; i <= 4; i++) {
+      const frac = i / 4;
+      const y = padT + plotH * (1 - frac);
+      const dash = i === 0 ? '' : ' stroke-dasharray="4 4"';
+      gridParts.push(
+        `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"${dash}/>`
+      );
+      if (showDl) {
+        gridParts.push(
+          `<text x="${padL - 10}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="#c8f538" font-size="11.5" font-weight="600">${fmtCompactNum(Math.round(dlMax * frac))}</text>`
+        );
+      }
+      if (showSt) {
+        gridParts.push(
+          `<text x="${W - padR + 10}" y="${(y + 4).toFixed(1)}" text-anchor="start" fill="#fbbf24" font-size="11.5" font-weight="600">${fmtCompactNum(Math.round(stMax * frac))}</text>`
+        );
+      }
+    }
+
+    const xLabels: string[] = [];
+    const labelCount = Math.min(6, n);
+    const seen = new Set<number>();
+    for (let k = 0; k < labelCount; k++) {
+      const idx = Math.round((k * (n - 1)) / Math.max(1, labelCount - 1));
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      const x = dlCoords[idx][0];
+      xLabels.push(
+        `<text x="${x.toFixed(1)}" y="${(baseY + 24).toFixed(1)}" text-anchor="middle" fill="#94a3b8" font-size="11">${pts[idx].short || pts[idx].label}</text>`
+      );
+    }
+
+    const lastDl = dlCoords[n - 1];
+    const lastSt = starCoords[n - 1];
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="gDlGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#c8f538" stop-opacity="0.30"/>
+          <stop offset="100%" stop-color="#c8f538" stop-opacity="0.01"/>
+        </linearGradient>
+        <linearGradient id="gStGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.24"/>
+          <stop offset="100%" stop-color="#fbbf24" stop-opacity="0.01"/>
+        </linearGradient>
+      </defs>
+      ${gridParts.join('')}
+      ${showSt ? `<path d="${stArea}" fill="url(#gStGrad)"/>` : ''}
+      ${showDl ? `<path d="${dlArea}" fill="url(#gDlGrad)"/>` : ''}
+      ${showSt ? `<path d="${stPath}" fill="none" stroke="#fbbf24" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+      ${showDl ? `<path d="${dlPath}" fill="none" stroke="#c8f538" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+      ${showDl ? `<circle cx="${lastDl[0].toFixed(1)}" cy="${lastDl[1].toFixed(1)}" r="8" fill="#c8f538" opacity="0.22"/><circle cx="${lastDl[0].toFixed(1)}" cy="${lastDl[1].toFixed(1)}" r="4.2" fill="#c8f538" stroke="#0d111a" stroke-width="2"/>` : ''}
+      ${showSt ? `<circle cx="${lastSt[0].toFixed(1)}" cy="${lastSt[1].toFixed(1)}" r="8" fill="#fbbf24" opacity="0.24"/><circle cx="${lastSt[0].toFixed(1)}" cy="${lastSt[1].toFixed(1)}" r="4.2" fill="#fbbf24" stroke="#0d111a" stroke-width="2"/>` : ''}
+      <line id="growth-crosshair" x1="0" y1="${padT}" x2="0" y2="${baseY}" stroke="rgba(255,255,255,0.28)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>
+      <circle id="growth-hover-dl" cx="0" cy="0" r="5" fill="#c8f538" stroke="#0b0e16" stroke-width="2" visibility="hidden"/>
+      <circle id="growth-hover-st" cx="0" cy="0" r="5" fill="#fbbf24" stroke="#0b0e16" stroke-width="2" visibility="hidden"/>
+      ${xLabels.join('')}
+    `;
+  };
+
+  const handlePointer = (clientX: number) => {
+    if (!cachedSeries || cachedSeries.points.length === 0 || !tooltip) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const svgX = ((clientX - rect.left) / rect.width) * W;
+    const clampedX = Math.max(padL, Math.min(W - padR, svgX));
+    const frac = (clampedX - padL) / plotW;
+    const idx = Math.max(0, Math.min(cachedSeries.points.length - 1, Math.round(frac * (cachedSeries.points.length - 1))));
+    const pt = cachedSeries.points[idx];
+    const [dx, dy] = dlCoords[idx];
+    const [sx, sy] = starCoords[idx];
+
+    const cross = svg.getElementById('growth-crosshair');
+    const hDl = svg.getElementById('growth-hover-dl');
+    const hSt = svg.getElementById('growth-hover-st');
+    const showDl = mode === 'both' || mode === 'downloads';
+    const showSt = mode === 'both' || mode === 'stars';
+
+    if (cross) {
+      cross.setAttribute('x1', dx.toFixed(1));
+      cross.setAttribute('x2', dx.toFixed(1));
+      cross.setAttribute('visibility', 'visible');
+    }
+    if (hDl) {
+      hDl.setAttribute('cx', dx.toFixed(1));
+      hDl.setAttribute('cy', dy.toFixed(1));
+      hDl.setAttribute('visibility', showDl ? 'visible' : 'hidden');
+    }
+    if (hSt) {
+      hSt.setAttribute('cx', sx.toFixed(1));
+      hSt.setAttribute('cy', sy.toFixed(1));
+      hSt.setAttribute('visibility', showSt ? 'visible' : 'hidden');
+    }
+
+    if (ttTime) ttTime.textContent = `${pt.label} (UTC+8)`;
+    if (ttDl) ttDl.textContent = pt.downloads.toLocaleString();
+    if (ttStars) ttStars.textContent = `★ ${pt.stars.toLocaleString()}`;
+    tooltip.classList.remove('hidden');
+
+    const stageRect = stage.getBoundingClientRect();
+    const pxX = ((dx / W) * rect.width) + (rect.left - stageRect.left);
+    const ttW = tooltip.offsetWidth || 180;
+    const leftPos = pxX + ttW + 24 > stageRect.width ? Math.max(10, pxX - ttW - 16) : Math.min(stageRect.width - ttW - 10, pxX + 16);
+    tooltip.style.left = `${leftPos.toFixed(0)}px`;
+  };
+
+  const hideHover = () => {
+    tooltip?.classList.add('hidden');
+    svg.getElementById('growth-crosshair')?.setAttribute('visibility', 'hidden');
+    svg.getElementById('growth-hover-dl')?.setAttribute('visibility', 'hidden');
+    svg.getElementById('growth-hover-st')?.setAttribute('visibility', 'hidden');
+  };
+
+  stage.addEventListener('pointermove', (e) => handlePointer((e as PointerEvent).clientX));
+  stage.addEventListener('pointerleave', hideHover);
+
+  document.querySelectorAll<HTMLButtonElement>('[data-growth-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const m = btn.dataset.growthMode;
+      if (m === 'both' || m === 'downloads' || m === 'stars') {
+        mode = m;
+        document.querySelectorAll<HTMLButtonElement>('[data-growth-mode]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.growthMode === mode);
+        });
+        hideHover();
+        renderChart();
+      }
+    });
+  });
+
+  const syncHeroGrowthMeta = () => {
+    if (!cachedSeries) return;
+    if (typeof cachedSeries.stars === 'number' && cachedSeries.stars > 0) {
+      const stSep = document.getElementById('github-stats-sep');
+      const stTxt = document.getElementById('github-stats-text');
+      if (stSep && stTxt) {
+        stSep.style.display = '';
+        stTxt.style.display = '';
+        stTxt.textContent = `★ ${formatCount(cachedSeries.stars)} Stars`;
+      }
+    }
+    if (typeof cachedSeries.total_downloads === 'number' && cachedSeries.total_downloads > 0) {
+      const dlSep = document.getElementById('site-dl-sep');
+      const dlTxt = document.getElementById('site-dl-text');
+      if (dlSep && dlTxt) {
+        dlSep.style.display = '';
+        dlTxt.style.display = '';
+        dlTxt.textContent = i18n.fmt.totalDownloads(formatCount(cachedSeries.total_downloads));
+      }
+    }
+  };
+
+  const refresh = async () => {
+    try {
+      const res = await fetch('/kurocat/api/growth', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json()) as GrowthSeries;
+      if (data && Array.isArray(data.points) && data.points.length > 0) {
+        cachedSeries = data;
+        renderChart();
+        syncHeroGrowthMeta();
+      }
+    } catch {
+      // Keep last rendered chart on transient network errors
+    }
+  };
+
+  localeListeners.push(() => {
+    renderUpdatedText();
+    syncHeroGrowthMeta();
+  });
+
+  void refresh();
+  window.setInterval(() => {
+    void refresh();
+  }, 60_000);
+}
+
 applyReleaseUI(LOCAL_MIRROR_VERSION, buildDefaultAssets());
 initDownloadTracking();
 initPlayground();
 initMcpCodeTabs();
 initLanguageSwitcher();
+initGrowthChart();
 setLocale(currentLocale, false);
 initPolish();
 void syncGithubMetadata();

@@ -74,13 +74,13 @@ function triggerPetBurst(): void {
   const step = (now: number) => {
     const t = Math.min(1, (now - start) / duration);
     const wave = Math.sin(t * Math.PI * 4.0) * 0.14;
-    engine.onWindowCursor(0.48 + wave, 0.36, true);
+    engine.onWindowCursor(0.48 + wave, 0.36, true, 'touch');
     if (t < 1) {
       petAnimRaf = requestAnimationFrame(step);
     } else {
       petAnimRaf = null;
       petResetTimer = window.setTimeout(() => {
-        engine.onWindowCursor(-1, -1, false);
+        engine.onWindowCursor(-1, -1, false, 'touch');
       }, 320);
     }
   };
@@ -161,7 +161,7 @@ const bridge = {
   },
 
   petMove(relX: number, relY: number, active: boolean): void {
-    engine.onWindowCursor(relX, relY, Boolean(active));
+    engine.onWindowCursor(relX, relY, Boolean(active), 'touch');
   },
 
   resize(): void {

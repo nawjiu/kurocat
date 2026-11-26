@@ -9,14 +9,14 @@
     <div id="context-menu" class="context-menu floating-side-menu tab-menu-layout">
       <div class="menu-header-row">
         <div class="menu-header" id="menu-header">🐈‍⬛ KuroCat 小黑猫</div>
-        <button class="menu-close-btn" id="btn-close-menu" type="button" title="关闭菜单 (Esc)">×</button>
+        <button class="menu-close-btn" id="btn-close-menu" type="button" data-i18n-title="menu.close_title" title="关闭菜单 (Esc)">×</button>
       </div>
 
-      <div class="menu-tabs" role="tablist" aria-label="设置分类">
-        <button class="menu-tab-btn active" data-tab="appearance" type="button" role="tab" aria-selected="true">
+      <div class="menu-tabs" role="tablist" aria-label="Settings">
+        <button class="menu-tab-btn active" data-tab="appearance" data-i18n="menu.tab_appearance" type="button" role="tab" aria-selected="true">
           🐱 外观与互动
         </button>
-        <button class="menu-tab-btn" data-tab="system" type="button" role="tab" aria-selected="false">
+        <button class="menu-tab-btn" data-tab="system" data-i18n="menu.tab_system" type="button" role="tab" aria-selected="false">
           ⚙️ 键盘·OBS·系统
         </button>
       </div>
@@ -25,35 +25,35 @@
         <!-- Tab 1: Appearance & Interaction -->
         <div class="tab-panel" data-tab-panel="appearance">
           <div class="menu-scale-row">
-            <span class="menu-scale-label">角色外观（支持 MCP 定制）</span>
+            <span class="menu-scale-label" data-i18n="menu.breed_label">角色外观（支持 MCP 定制）</span>
             <div class="breed-pills" id="breed-pills"></div>
           </div>
 
           <div class="menu-scale-row" id="render-mode-row">
-            <span class="menu-scale-label">视觉模式（可选 3D / 2D）</span>
+            <span class="menu-scale-label" data-i18n="menu.render_mode_label">视觉模式（可选 3D / 2D）</span>
             <div class="kb-pills">
-              <button class="kb-pill active" data-rendermode="3d" type="button" title="Three.js 真 3D 体积光影手办">✨ 3D 立体</button>
-              <button class="kb-pill" data-rendermode="2d" type="button" title="经典 2D 矢量手绘，极简省电">🎨 2D 经典</button>
+              <button class="kb-pill active" data-rendermode="3d" data-i18n="menu.render_3d" data-i18n-title="menu.render_3d_title" type="button" title="Three.js 真 3D 体积光影手办">✨ 3D 立体</button>
+              <button class="kb-pill" data-rendermode="2d" data-i18n="menu.render_2d" data-i18n-title="menu.render_2d_title" type="button" title="经典 2D 矢量手绘，极简省电">🎨 2D 经典</button>
             </div>
           </div>
 
           <div class="menu-scale-row" id="collar-row">
-            <span class="menu-scale-label">3D 项圈铃铛</span>
+            <span class="menu-scale-label" data-i18n="menu.collar_label">3D 项圈铃铛</span>
             <div class="collar-pills">
-              <button class="kb-pill active" data-collar="none" type="button">无</button>
-              <button class="kb-pill" data-collar="red" type="button">红</button>
-              <button class="kb-pill" data-collar="blue" type="button">蓝</button>
-              <button class="kb-pill" data-collar="pink" type="button">粉</button>
-              <button class="kb-pill" data-collar="green" type="button">绿</button>
+              <button class="kb-pill active" data-collar="none" data-i18n="menu.collar_none" type="button">无</button>
+              <button class="kb-pill" data-collar="red" data-i18n="menu.collar_red" type="button">红</button>
+              <button class="kb-pill" data-collar="blue" data-i18n="menu.collar_blue" type="button">蓝</button>
+              <button class="kb-pill" data-collar="pink" data-i18n="menu.collar_pink" type="button">粉</button>
+              <button class="kb-pill" data-collar="green" data-i18n="menu.collar_green" type="button">绿</button>
             </div>
           </div>
 
           <div class="menu-scale-row" id="headphone-row">
-            <span class="menu-scale-label">电竞耳机</span>
+            <span class="menu-scale-label" data-i18n="menu.headphone_label">电竞耳机</span>
             <div class="render-mode-pills">
-              <button class="kb-pill active" data-headphonemode="off" type="button" title="不戴耳机">关闭</button>
-              <button class="kb-pill" data-headphonemode="auto" type="button" title="检测到玩游戏时自动戴上电竞耳机，退出后自动摘下">🎮 游戏自动</button>
-              <button class="kb-pill" data-headphonemode="on" type="button" title="随时一直戴着电竞耳机">🎧 常戴</button>
+              <button class="kb-pill active" data-headphonemode="off" data-i18n="menu.headphone_off" type="button">关闭</button>
+              <button class="kb-pill" data-headphonemode="auto" data-i18n="menu.headphone_auto" type="button">🎮 游戏自动</button>
+              <button class="kb-pill" data-headphonemode="on" data-i18n="menu.headphone_on" type="button">🎧 常戴</button>
             </div>
           </div>
 
@@ -83,76 +83,83 @@
 
           <div class="menu-sep"></div>
 
-          <button class="menu-item" data-action="toggle-privacy" title="检测到输入密码时猫猫自动闭眼、大肥鱼双手捂眼并隐藏全部按键">
-            <span>输密码自动闭眼防偷窥</span>
+          <button class="menu-item" data-action="toggle-privacy">
+            <span data-i18n="menu.toggle_privacy">输密码自动闭眼防偷窥</span>
             <span class="menu-check" id="chk-privacy">✓</span>
           </button>
           <button class="menu-item" data-action="toggle-bubbles">
-            <span>悬浮按键气泡</span>
+            <span data-i18n="menu.toggle_bubbles">悬浮按键气泡</span>
             <span class="menu-check" id="chk-bubbles">✓</span>
           </button>
-          <button class="menu-item" data-action="toggle-lock" id="btn-toggle-lock" title="开启后重启保持锁定，按住 Alt 或在托盘可随时解锁">
-            <span id="lbl-toggle-lock">锁定鼠标穿透（Alt 解锁）</span>
+          <button class="menu-item" data-action="toggle-lock" id="btn-toggle-lock">
+            <span id="lbl-toggle-lock" data-i18n="menu.toggle_lock">锁定鼠标穿透（Alt 解锁）</span>
             <span class="menu-check" id="chk-lock"></span>
           </button>
           <button class="menu-item" data-action="toggle-sound">
-            <span>摸头呼噜声</span>
+            <span data-i18n="menu.toggle_sound">摸头呼噜声</span>
             <span class="menu-check" id="chk-sound">✓</span>
           </button>
-          <button class="menu-item" data-action="toggle-purr-always" title="开启后不摸也一直小声呼噜；关闭时松开抚摸约 2 秒后自动停止">
-            <span>呼噜声常驻</span>
+          <button class="menu-item" data-action="toggle-purr-always" data-i18n-title="menu.toggle_purr_always_title" title="开启后不摸也一直小声呼噜；关闭时松开抚摸约 2 秒后自动停止">
+            <span data-i18n="menu.toggle_purr_always">呼噜声常驻</span>
             <span class="menu-check" id="chk-purr-always"></span>
           </button>
-          <button class="menu-item" data-action="toggle-mouse-invert" title="猫猫按自己的视角理解鼠标：左右上下全部反过来（像隔着桌子回头看你的猫）">
-            <span>鼠标反转（猫视角）</span>
+          <button class="menu-item" data-action="toggle-mouse-invert" data-i18n-title="menu.toggle_mouse_invert_title" title="猫猫按自己的视角理解鼠标：左右上下全部反过来（像隔着桌子回头看你的猫）">
+            <span data-i18n="menu.toggle_mouse_invert">鼠标反转（猫视角）</span>
             <span class="menu-check" id="chk-mouse-invert"></span>
           </button>
-          <button class="menu-item" data-action="toggle-top">
-            <span>始终置顶显示</span>
-            <span class="menu-check" id="chk-top">✓</span>
+
+          <div class="menu-sep"></div>
+
+          <button class="menu-item" data-action="toggle-mcp">
+            <span data-i18n="menu.toggle_mcp">开启 MCP 扩展</span>
+            <span class="menu-check" id="chk-mcp">✓</span>
           </button>
-          <button class="menu-item" data-action="toggle-autostart">
-            <span>开机自动启动</span>
-            <span class="menu-check" id="chk-autostart"></span>
-          </button>
+          <div class="mcp-copy-row">
+            <button class="mcp-copy-btn" data-action="copy-mcp" id="btn-copy-mcp" type="button">
+              <span id="mcp-copy-hint" data-i18n="menu.copy_mcp">复制 MCP 配置</span>
+            </button>
+            <button class="mcp-copy-btn" data-action="copy-hooks" id="btn-copy-hooks" type="button">
+              <span id="hooks-copy-hint" data-i18n="menu.copy_hooks">发给 AI 自动配置</span>
+            </button>
+          </div>
         </div>
 
         <!-- Tab 2: Keyboard, OBS, MCP & System -->
         <div class="tab-panel hidden" data-tab-panel="system">
           <div class="menu-scale-row">
-            <span class="menu-scale-label">键盘配列与方向</span>
+            <span class="menu-scale-label" data-i18n="menu.kb_label">键盘配列与方向</span>
             <div class="kb-pills kb-pills--3">
-              <button class="kb-pill active" data-kblayout="65" type="button" title="65% 紧凑配列">65%</button>
-              <button class="kb-pill" data-kblayout="98" type="button" title="98 键（980）配列：保留小键盘，方向键收进主键区">98 键</button>
-              <button class="kb-pill" data-kblayout="108" type="button" title="108 键全尺寸">108 键</button>
+              <button class="kb-pill active" data-kblayout="65" data-i18n="menu.kb_65" type="button">65% 紧凑</button>
+              <button class="kb-pill" data-kblayout="98" data-i18n="menu.kb_98" type="button">98 键</button>
+              <button class="kb-pill" data-kblayout="108" data-i18n="menu.kb_108" type="button">108 全尺寸</button>
             </div>
             <div class="kb-pills">
-              <button class="kb-pill active" data-kborient="cat" type="button">面向猫咪</button>
-              <button class="kb-pill" data-kborient="viewer" type="button">面向观众</button>
+              <button class="kb-pill active" data-kborient="cat" data-i18n="menu.kb_cat" type="button">面向猫咪</button>
+              <button class="kb-pill" data-kborient="viewer" data-i18n="menu.kb_viewer" type="button">面向观众</button>
             </div>
           </div>
 
           <div class="menu-scale-row">
             <div class="scale-header">
-              <span class="menu-scale-label">尾巴拍键模式</span>
+              <span class="menu-scale-label" data-i18n="menu.tail_label">尾巴拍键模式</span>
               <span class="tail-mode-badge" id="tail-mode-badge">智能第三只手</span>
             </div>
             <div class="tail-mode-pills">
-              <button class="kb-pill active" data-tailmode="smart" type="button" title="平时双手打字，两手忙不过来或敲完回车时自动出尾">智能</button>
-              <button class="kb-pill" data-tailmode="custom" type="button" title="只拍你亲手勾选的按键">自定义</button>
-              <button class="kb-pill" data-tailmode="edge" type="button" title="近尾外侧边缘区（不拆 WASD）">边缘</button>
-              <button class="kb-pill" data-tailmode="off" type="button" title="尾巴只自然摆动，不拍任何键">关闭</button>
+              <button class="kb-pill active" data-tailmode="smart" data-i18n="menu.tail_smart" type="button">智能</button>
+              <button class="kb-pill" data-tailmode="custom" data-i18n="menu.tail_custom" type="button">自定义</button>
+              <button class="kb-pill" data-tailmode="edge" data-i18n="menu.tail_edge" type="button">边缘</button>
+              <button class="kb-pill" data-tailmode="off" data-i18n="menu.tail_off" type="button">关闭</button>
             </div>
             <button class="tail-pick-trigger" data-action="open-tail-picker" id="btn-open-tail-picker" type="button">
-              <span>🐾 在键盘上点选尾巴按键</span>
+              <span data-i18n="menu.tail_pick_btn">🐾 在键盘上点选尾巴按键</span>
               <span class="menu-hint" id="tail-keys-count">4 键</span>
             </button>
           </div>
 
           <div class="menu-scale-row">
             <div class="scale-header">
-              <span class="menu-scale-label">尺寸缩放</span>
-              <button class="scale-value-btn" id="scale-value" type="button" title="点击复位 100%">100%</button>
+              <span class="menu-scale-label" data-i18n="menu.scale_label">尺寸缩放</span>
+              <button class="scale-value-btn" id="scale-value" type="button" data-i18n-title="menu.scale_reset_title" title="点击复位 100%">100%</button>
             </div>
             <div class="scale-slider-wrap">
               <input
@@ -172,49 +179,62 @@
             </div>
           </div>
 
+          <div class="menu-scale-row">
+            <span class="menu-scale-label" data-i18n="menu.perf_lang_label">帧率上限与界面语言</span>
+            <div class="kb-pills">
+              <button class="kb-pill active" data-fpscap="0" data-i18n="menu.fps_auto" type="button">60 流畅</button>
+              <button class="kb-pill" data-fpscap="30" data-i18n="menu.fps_eco" type="button">30 省电</button>
+            </div>
+            <div class="lang-pills">
+              <button class="kb-pill active" data-lang="auto" data-i18n="menu.lang_auto" type="button">跟随系统</button>
+              <button class="kb-pill" data-lang="zh-CN" type="button">简体中文</button>
+              <button class="kb-pill" data-lang="zh-TW" type="button">繁體中文</button>
+              <button class="kb-pill" data-lang="en-US" type="button">English</button>
+              <button class="kb-pill" data-lang="ja-JP" type="button">日本語</button>
+              <button class="kb-pill" data-lang="ko-KR" type="button">한국어</button>
+            </div>
+          </div>
+
           <div class="menu-sep"></div>
 
-          <button class="menu-item" data-action="toggle-obs" title="开启本机透明 OBS 浏览器源，免绿幕抠像，密码防偷窥同步生效">
-            <span>开启 OBS 透明直播源</span>
+          <button class="menu-item" data-action="toggle-obs">
+            <span data-i18n="menu.toggle_obs">开启 OBS 透明直播源</span>
             <span class="menu-check" id="chk-obs"></span>
           </button>
-          <button class="menu-item" data-action="copy-obs" id="btn-copy-obs" title="复制地址并在 OBS 中添加「浏览器」来源即可">
-            <span>复制 OBS 透明源地址</span>
-            <span class="menu-hint" id="obs-copy-hint">免抠像</span>
+          <button class="menu-item" data-action="copy-obs" id="btn-copy-obs">
+            <span data-i18n="menu.copy_obs">复制 OBS 透明源地址</span>
+            <span class="menu-hint" id="obs-copy-hint" data-i18n="menu.obs_hint">免抠像</span>
           </button>
-          <button class="menu-item hidden" data-action="toggle-obs-hide" id="btn-obs-hide" title="仅在 OBS 画面中显示小猫，打游戏时不遮挡桌面视野">
-            <span>仅 OBS 显示（隐藏桌面猫）</span>
+          <button class="menu-item hidden" data-action="toggle-obs-hide" id="btn-obs-hide">
+            <span data-i18n="menu.obs_hide_pet">仅 OBS 显示（隐藏桌面猫）</span>
             <span class="menu-check" id="chk-obs-hide"></span>
           </button>
 
           <div class="menu-sep"></div>
 
-          <button class="menu-item" data-action="toggle-mcp">
-            <span>开启 MCP 扩展</span>
-            <span class="menu-check" id="chk-mcp">✓</span>
+          <button class="menu-item" data-action="toggle-top">
+            <span data-i18n="menu.toggle_top">始终置顶显示</span>
+            <span class="menu-check" id="chk-top">✓</span>
           </button>
-          <button class="menu-item" data-action="copy-mcp" id="btn-copy-mcp">
-            <span>复制 MCP 配置</span>
-            <span class="menu-hint" id="mcp-copy-hint">AI 捏猫</span>
+          <button class="menu-item" data-action="toggle-autostart">
+            <span data-i18n="menu.toggle_autostart">开机自动启动</span>
+            <span class="menu-check" id="chk-autostart"></span>
           </button>
-
-          <div class="menu-sep"></div>
-
           <button class="menu-item" data-action="desktop-shortcut" id="btn-desktop-shortcut">
-            <span>创建桌面图标</span>
+            <span data-i18n="menu.desktop_shortcut">创建桌面图标</span>
             <span class="menu-hint" id="shortcut-hint">KuroCat</span>
           </button>
           <button class="menu-item" data-action="reset-pos">
-            <span>重置位置到右下角</span>
+            <span data-i18n="menu.reset_pos">重置位置到右下角</span>
           </button>
         </div>
       </div>
 
       <div class="tab-footer">
         <button class="footer-btn" data-action="check-update" id="btn-check-update" type="button">
-          <span id="update-hint">检查更新 v5.1.0</span>
+          <span id="update-hint">检查更新 v5.1.2</span>
         </button>
-        <button class="footer-btn danger" data-action="quit" type="button">退出</button>
+        <button class="footer-btn danger" data-action="quit" data-i18n="menu.quit" type="button">退出</button>
       </div>
     </div>
 

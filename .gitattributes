@@ -1,0 +1,12 @@
+# Normalize text files to LF so merges with upstream do not turn into whole-file conflicts
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.webp binary
+*.mp3 binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.woff2 binary
+*.exe binary
