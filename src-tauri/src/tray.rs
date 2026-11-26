@@ -681,12 +681,14 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     let _ = app.emit("kuro-settings", updated);
                 }
                 "purr_always" => {
-                    let mut s = state.settings.lock().unwrap();
-                    s.purr_always_on = !s.purr_always_on;
-                    let on = s.purr_always_on;
-                    crate::config::save_settings(&s);
-                    let _ = purr_always.set_checked(on);
-                    let _ = app.emit("kuro-settings", s.clone());
+                    let updated = {
+                        let mut s = state.settings.lock().unwrap();
+                        s.purr_always_on = !s.purr_always_on;
+                        crate::config::save_settings(&s);
+                        s.clone()
+                    };
+                    sync_checkmarks(&updated);
+                    let _ = app.emit("kuro-settings", updated);
                 }
                 "always_on_top" => {
                     let (on_top, updated) = {
